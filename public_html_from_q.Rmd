@@ -1,0 +1,2352 @@
+---
+title: "Examining the Decline of Save Percentage in the NHL"
+author: "Quinn Robnett and Luke Welsh"
+date: "2023-07-27"
+output:
+  html_document: default
+  # pdf_document: default
+---
+
+```{r, echo=FALSE, results='hide', include=FALSE}
+library(hockeyR)
+library(tidyverse)
+library(data.table)
+library(kableExtra)
+library(RColorBrewer)
+library(rcartocolor)
+```
+
+
+```{r, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
+goalies <- read_csv("goalies_all_seasons_count.csv") %>% 
+  rename(season = Season, team = Tm)
+
+goalies_team <- goalies %>% 
+  filter(team != "TOT")
+
+goalies_indv <- goalies %>%
+  group_by(Player, season, Rk) %>% 
+  filter(row_number()==1)
+
+sample_shot <- read_csv("shot-sample.csv") %>% mutate(season = substr(season, 5, 8))
+
+# # If you do not have the csv:
+# pbp <- load_pbp(season = 2012:2023) %>%
+#    mutate(empty_net = ifelse(is.na(empty_net) | empty_net == FALSE, FALSE, TRUE)) %>%
+#    filter(season_type == 'R',
+#           period_type != "SHOOTOUT",
+#           empty_net == FALSE)
+# pbp$season <- substr(pbp$season, 5, 8)
+# #For writing to csv:
+# pbp <- pbp %>%
+#    select(-event_id, -period_seconds, -period_seconds_remaining, -contains("player"), -strength,
+#          -num_on, -num_off, -game_winning_goal, -contains("home_on"), -contains("away_on"), -penalty_severity, -penalty_minutes, -event_team_link,
+#           -date_time, -event_team_id, -event_team_abbr, -home_final, -away_final, -game_date, -game_end, -game_start, -game_length, -game_state,
+#          -detailed_state, -venue_id, -contains("venue"), -contains("division"), -contains("conference"), -contains("abbreviation"),
+#          -contains("ids"), -event_idx, -ordinal_num, -home_id, -away_id, -event_goalie_id, -event_goalie_link, -event_goalie_type)
+# write.csv(pbp, 'pbp.csv')
+# # 
+# # ## OR IF YOU HAVE THE .csv (much faster)
+pbp <- read.csv("pbp.csv") %>% 
+  mutate(event_goalie_name = str_replace_all(event_goalie_name, "\\.", " "),
+         home_goalie = str_replace_all(home_goalie, "\\.", " "),
+         away_goalie = str_replace_all(away_goalie, "\\.", " "),
+         event_goalie_team = case_when(event_team == home_name ~ away_name,
+                                       event_team == away_name ~ home_name))
+```
+
+## Introduction
+
+Goaltending in the NHL is of vital importance. A goalie's job is simple: stop the other team from scoring. Good (and timely) goaltending can be the difference between a mediocre team and a team that goes on a deep run in the playoffs. Many of the best "underdog" or "cinderella" playoff runs can be attributed to a goaltender getting hot. For example, just this year, the 8-seed Florida Panthers made a run to the Stanley Cup Final on the back of Sergei Bobrovsky, who put up remarkable numbers in the playoffs.
+
+Individual goaltending is hard, if not impossible, to predict on a year to year basis. The "best" goalies seem to change each year (a total of 12 different goalies have been Vezina trophy finalists over the past 5 seasons, with only 2 appearing more than once). It isn't uncommon for a goalie to follow up a spectacular year with an unremarkable one, or vice versa. Take Jakob Markstrom, for example, who in 2021-22 was a finalist for the Vezina trophy with a .922 save percentage (SV%) and a 2.22 goals against average (GAA). The following season, he fell off a cliff, posting an .892 SV% and a 2.92 GAA. However, while individual goaltending may be hard to predict, one might expect league averages to be similar on a year to year basis. However, over the last handful of seasons, a striking anomaly has made itself present.
+
+#### Save Percentage by Year {.tabset}
+
+##### Plot
+
+```{r, echo=FALSE}
+svpct_by_year <- goalies_indv %>% 
+  group_by(season) %>%
+  summarise(SV = sum(SV), SOG = sum(SA), goals = sum(GA)) %>% 
+  mutate(SVpct = SV/SOG)
+
+svpct_by_year %>% 
+  ggplot(aes(season, SVpct)) +
+  geom_point(size = 3) +
+  geom_line() +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ggtitle("League Save Percentage by Year") +
+  ylab("Save Percentage") +
+  theme_bw()
+```
+
+##### Table
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+svpct_by_year %>%
+  mutate(SVpct = round(SVpct, 4)) %>%
+  rename(`SV%` = SVpct, Season = season, G = goals) %>% 
+  kable(booktabs = TRUE) %>% 
+  kable_styling("striped") %>% 
+  column_spec(5, color = "white",
+              background = spec_color(svpct_by_year$SVpct, end = 0.7),
+              popover = paste("am:", svpct_by_year$SVpct)) 
+```
+
+#### {-}
+
+As you can see, league-wide save percentage has been on a significant decline since 2016. In just eight seasons, save percentage has fallen from nearly .915 to a mere .904 in 2022-23. What's going on here? That is what we will attempt to uncover.
+
+## Data Summary
+
+We used two data sets for our analysis. The first was pulled from Hockey Reference and includes yearly goalie stats for every goalie that has appeared in an NHL game from 2011-12 to 2022-23. Important variables in this data set include season, games played (GP), games started (GS), goals against (GA), shots against (SA), saves (SV), and save percentage (SV%).
+
+##### Snippet of Hockey Reference Goalie Data
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+goalies %>%
+  select(Player, Age, team, season, GP, GS, W, L, `T/O`, GA, SA, SV, `SV%`, GAA) %>%
+  rename(Team = team, OT = `T/O`, Season = season) %>% 
+  arrange(-Season, -GP) %>%
+  head() %>%
+  knitr::kable() %>%
+  kable_styling("striped")
+
+```
+
+
+Our second dataset is event-level play by play data courtesy of the hockeyR package (https://github.com/danmorse314/hockeyR) created by Dan Morse. The package scrapes and cleans play by play data from the NHL Website. We used it to scrape data from the 2011-12 to 2022-23 season, and the resulting data set had over 4 million rows of event data. Important variables in this data set include game ID, event type, x and y coordinates of each event, strength code, shot distance, and shot angle (the full data set consists of over 100 attributes).
+
+#### Snippet of hockeyR Play by Play Data
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+pbp %>%
+  select(event_type, event_team, event_team_type, period, period_time, game_seconds_remaining, shot_distance, shot_angle, x_fixed, y_fixed) %>%
+  head() %>%
+  knitr::kable() %>%
+  kable_styling("striped")
+
+```
+
+*Note*: Any time a season is referenced, it refers to the year the season **concluded** (for example, the 2011-12 season will appear as '2012')
+
+## Exploratory Data Analysis
+
+There are many potential explanations for the drastic decline in save percentage. The simplest hypothesis is that goalies have gotten worse. While this could be the case, our inclination is to believe that something else could be going on. So going forward, we will operate under the assumption that the relative skill of goaltenders has not changed.
+
+#### Hypothesis #1: Worse Goalies are Playing More
+
+Our first idea at what could be explaining the decline is simple: worse goalies are playing more. Each team has two goalies on the roster. Typically, one goalie will be the designated "starter" and get the majority of starts, while the "backup" will play a handful of games to help the starter get some rest. In some cases, a team will run a "tandem" where both their goalies are of a similar level and get a similar amount of starts, although this is much less common. Simply put, it's a possibility that teams are giving their starters more rest, which could lead to save percentage dropping on average.
+
+#### Percentage of Games Started by a Starter {.tabset}
+
+##### Plot
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+#starters ####
+starters <- goalies_indv %>% 
+  group_by(season) %>% 
+  arrange(-GS, -`SV%`) %>% 
+  slice(1:30) %>% 
+  mutate(rank = "Starter")
+
+games_per_season <- pbp %>% 
+  group_by(season, game_id) %>% 
+  summarise(count = n()) %>% 
+  ungroup() %>% 
+  group_by(season) %>% 
+  summarise(games = n())
+
+teams_per_season <- pbp %>% 
+  group_by(season, home_name) %>% 
+  summarise(count = n()) %>% 
+  ungroup() %>% 
+  group_by(season) %>% 
+  summarise(teams = n())
+
+starters <- games_per_season %>%
+  left_join(teams_per_season, by = "season") %>% 
+  mutate(games_per = (games*2)/teams,
+         season = as.numeric(season)) %>% 
+  right_join(starters, by = "season")
+
+starters$games_per[which(starters$season == 2023)] <-  82
+
+pctstarts <- starters %>% 
+  group_by(season, games) %>% 
+  summarise(GS = sum(GS)) %>% 
+  mutate(pct_started = GS/(games*2))
+
+pctstarts %>% 
+  ggplot(aes(season, pct_started)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ggtitle("Starter League-Wide Average Pct of Starts by Season") +
+  scale_x_continuous("Season", labels = pctstarts$season, breaks = pctstarts$season) +
+  ylab("Percentage of Starts") +
+  theme_bw()
+
+```
+
+##### Table 
+
+```{r, echo =FALSE, message=FALSE, warning=FALSE}
+pctstarts %>%
+  select(season, GS, pct_started) %>%
+  rename(`Avg Starts` = GS, Season = season, `Pct Started` = pct_started) %>% 
+  kable(booktabs = TRUE) %>% 
+  kable_styling("striped") %>% 
+  column_spec(3, color = "white",
+              background = spec_color(pctstarts$pct_started, end = 0.7),
+              popover = paste("am:", pctstarts$pct_started))
+```
+
+
+*Note*: You'll notice that in the 2020 season, the number of games played in the season was approximately 70.58. This is due to the season being cut short for the COVID-19 pandemic, leaving teams with a differing number of games played.
+
+#### {-}
+
+We observe that this is indeed the case. In the figure above, a starter was considered to be the goalie who played in the most games for a team over the course of a season. In general, the percentage of games a starter plays in has declined in a similar manner to save percentage. While this may be a contributing factor to the overall decline in save percentage, the figure below shows that there is something else going on.
+
+
+
+```{r, echo = FALSE, message=FALSE, warning = FALSE}
+backups <- goalies_indv %>% 
+  group_by(season) %>% 
+  arrange(-GS, -`SV%`) %>% 
+  slice(31:1000) %>% 
+  mutate(rank = "Backup")
+
+backups <- games_per_season %>%
+  left_join(teams_per_season, by = "season") %>% 
+  mutate(games_per = (games*2)/teams,
+         season = as.numeric(season)) %>% 
+  right_join(backups, by = "season")
+
+backups$games_per[which(backups$season == 2023)] <-  82
+
+startback <- starters %>% 
+  rbind(., backups) %>%
+  group_by(season, rank) %>% 
+  summarise(SV = sum(SV), SOG = sum(SA), goals = sum(GA)) %>% 
+  mutate(SVpct = SV/SOG)
+
+my_colors = carto_pal(2, "Bold")
+
+startback %>% 
+  ggplot(aes(as.numeric(season), SVpct, color = rank)) +
+  geom_point(size = 3) + 
+  geom_line() +
+  ggtitle("Save Percentage for Starters/Backups by Year") +
+  scale_x_continuous("Season", labels = startback$season, breaks = startback$season) +
+  ylab("Save Percentage") +
+  labs(color = "Rank") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+
+```
+
+Unsurprisingly, it is clear that starters' save percentages are better than the backups' (any non-starter). But, even so, for both backups and starters, a decline in save percentage is still present. Even if we narrow it down to the top 15 starters by year based on save percentage, we still observe a decline:
+
+```{r, echo =FALSE, message=FALSE, warning=FALSE}
+starters %>%
+  group_by(season) %>% 
+  top_n(n=15, wt = `SV%`) %>% 
+  ungroup() %>% 
+  group_by(season) %>% 
+  summarise(SV = sum(SV), SOG = sum(SA)) %>% 
+  mutate(SVpct = SV/SOG) %>% 
+  ggplot(aes(season, SVpct)) +
+  geom_point( size = 3) +
+  geom_line() +
+  ggtitle("Top 15 Goalies Save Percentage by Year") + 
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ylab("Save Percentage")+
+  theme_bw()
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+starters12_16 <- startback %>% 
+  filter(rank == "Starter")
+
+backups12_16 <- startback %>% 
+  filter(rank == "Backup")
+
+pctstarts <- pctstarts %>% 
+  mutate(starter_pct = mean(starters12_16$SVpct),
+         backup_pct = mean(backups12_16$SVpct),
+         x_svpct = (pct_started*starter_pct) + ((1-pct_started)*backup_pct))
+
+
+startback2 <- startback %>% 
+  pivot_wider(values_from = SVpct, names_from = rank, id_cols = season) %>% 
+  mutate(diff = Starter - Backup)
+
+
+mean(startback2$diff)
+mean(startback2$diff) + 1.96*sd(startback2$diff)
+mean(startback2$diff) - 1.96*sd(startback2$diff)
+
+
+diff_svpct <- c(mean(startback2$diff), mean(startback2$diff) + 1.96*sd(startback2$diff), mean(startback2$diff) - 1.96*sd(startback2$diff))
+
+diff_start_pct <- max(pctstarts$pct_started) - min(pctstarts$pct_started)
+
+svpct_decline <- max(svpct_by_year$SVpct) - min(svpct_by_year$SVpct)
+
+(diff_svpct*diff_start_pct)/svpct_decline
+  
+```
+
+The mean difference in save percentage between starters and non-starters in approximately 0.0064, and the standard deviation is 0.0026. After calculating a confidence interval, we can say with 95% confidence that the "true" difference in save percentage is between 0.0014 and 0.0115. If we assume that this "true" difference is constant across all seasons, we can calculate how much we expect save percentage to have fallen off given the proportion of games started by a starter/backup. The percentage of games that backups are starting has increased by 11 percentage points. Therefore, we would expect a total decline in overall save percentage between 0.0002 and 0.0013. This expected decline would make up between 1.5 and 12.1 percent of the total observed decline in save percentage (0.011). So while this is playing into the decline, the majority of the drop off is being caused by some other phenomenon.
+
+#### Hypothesis 2: Increase in Power Plays
+
+We then shifted our attention to power plays. A power play consists of one team having more players on the ice than the other team due to penalties. Is it possible that an increase in power plays is contributing to a decline in save percentage? As you can see in the figures below, the answer is a resounding no. In fact, power play opportunities have also been trending down, until a recent spike in 2023. Power play shots per game hit a low in 2019 before bouncing back and has been rising since, despite the decline in power play opportunities.
+
+#### Power Plays by Year {.tabset}
+
+##### Opportunities
+
+```{r, echo=FALSE, message=FALSE}
+
+avgs <- read_csv("league_avgs.csv")
+
+avgs %>% 
+  ggplot(aes(Season, PPO)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ggtitle("Power Play Opportunities per Game by Season (Data: Hockey Reference)") +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ylab("Power Play Opportunities")+
+  theme_bw()
+
+
+```
+
+##### Shots
+
+```{r, message=FALSE, echo =FALSE}
+pbp %>% 
+  filter(event_type %in% c('SHOT', 'GOAL', 'MISSED_SHOT'),
+         strength_code %in% c('PP')) %>% 
+  group_by(season, game_id) %>% 
+  summarise(count = n()) %>% 
+  ungroup() %>% 
+  group_by(season) %>% 
+  summarise(ppspg = mean(count)) %>% 
+  ggplot(aes(season, ppspg)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ggtitle("Power Play Shots Per Game by Season") +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ylab("Power Play Shots per Game (both teams)") +
+  theme_bw()
+```
+
+#### {-}
+
+We also observe a decline in save percentage for both even strength and power play situations. Interestingly, the decline in save percentage for even strength seems to start much later than that of power plays. Power play save percentage seems to start a decline after 2014, whereas save percentage for even strength remains mostly constant through 2017 before taking a drop.
+
+```{r, echo=FALSE, message=FALSE}
+pbp %>% 
+  filter(event_type %in% c('SHOT', 'GOAL'),
+         strength_code %in% c('PP', 'EV')) %>%
+  mutate(event_type = ifelse(event_type == 'GOAL', 1, 0)) %>% 
+  group_by(season, strength_code) %>% 
+  summarize(save_perc = 1 - mean(event_type)) %>% 
+  ggplot(aes(x = as.numeric(season), y = save_perc, color = strength_code)) + 
+  geom_point(size = 3) +
+  geom_line() +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  labs(title = 'NHL Save Percentage on Shots on Goal, by Year', y = 'Save Percentage', color = 'Strength State') + 
+  scale_color_manual(values = my_colors) +
+  scale_fill_discrete(labels = c("Even Strength", "Power Play")) +
+  theme_bw()
+
+```
+
+
+#### Hypothesis 3: Shooters are Becoming More Effective
+
+Up to this point, we have ignored a key aspect of scoring goals: the shooter. After all, shooting percentage (goals/shots on goal) and save percentage will always add up to 1. If goalies aren't getting worse, it's not crazy to think that the decline in save percentage is more to do with shooters becoming more effective.
+
+Not only do we want to know if this is the case, but we want to understand how they've gotten better. To accomplish this, we turned to building an expected goals model. An expected goals (xG) model is a prediction model that calculates the likelihood of a shot being a goal given shots with similar characteristics in the past. Often times, these predictive models are trained on many seasons of data. However, our aim was to build an xG model on each season of data to analyze the coefficients for certain shot attributes. This is so that we can observe if the way players are scoring goals has fundamentally changed over time.
+
+## Methods
+
+#### Data Transformation
+
+To get the play by play data ready to build the model, we first filtered out any shootout and penalty shot events and filtered by fenwick events (shots, missed shots, goals). We then created the following variables (with help from code given by the hockeyR package):
+
+* Rush - TRUE when preceded by a neutral/defensive zone event 4 or less seconds prior
+* Rebound - TRUE when preceded by a fenwick event 2 or less seconds prior
+* Angle Change - Difference in angle from previous shot for shots classified as rebounds
+* Cross Ice - TRUE when preceded by an offensive zone event on the opposite side of the ice 2 or less second prior
+* Forecheck -  TRUE when preceded by a takeaway/giveaway in the offensive zone 2 or less seconds prior
+
+We believe that these are important factors to consider as to how goals are scored. We understand that creating these variables has limitations. Not every shot will be perfectly classified using this method, but we believe that it will be good enough to show any patterns in goal scoring.
+
+#### Model Building
+
+Once the data were cleaned and transformed, we built logistic models for even strength xG and power play xG separately. We decided to withhold building a shorthanded model given the infrequency and inherent strangeness of shorthanded shot attempts. Here are the explanatory variable we used in each model
+
+* Shot Distance
+* Shot Angle
+* Rush Event (Boolean)
+* Rebound Event (Boolean)
+* Rebound Event X Angle Change (Interaction Term)
+* Cross Ice Event (Boolean)
+* Forecheck - Even strength only (Boolean)
+
+*Note*: You'll notice that we did not use the forechecking varibale for the power play model. A very small percentage of fenwick events on the power play were classified as forechecking. This makes intuitive sense as teams generally try for controlled zone entries on the power play as opposed to a "dump and chase".
+
+After building the framework for the models, we trained a model for every individual season of data going back to the 2011-12 season.
+
+```{r, echo=FALSE}
+# Even Strength Model ####
+xG_by_year <- function(year) {
+ 
+  real_strengths <- c(
+    "5v5","5v4","5v3","6v5","6v4","6v3","4v3","3v3",
+    "4v4","4v5","3v5","5v6","4v6","3v6","3v4"
+  )
+
+  fenwick <- c("SHOT","MISSED_SHOT","GOAL")
+  
+  pbp_year <- pbp %>% filter(season == year)
+  
+  pbp_shots <- pbp_year %>% 
+    select(-xg) %>% 
+    filter(period_type != "SHOOTOUT") %>% 
+    filter(secondary_type != "Penalty Shot" | is.na(secondary_type)) %>% 
+    group_by(game_id) %>% 
+    mutate(
+      last_event_type = lag(event_type),
+      last_event_team = lag(event_team),
+      time_since_last = game_seconds - lag(game_seconds),
+      last_x_fixed = lag(x_fixed),
+      last_y_fixed = lag(y_fixed),
+      distance_from_last = round(sqrt(((y_fixed - last_y_fixed)^2) + ((x_fixed - last_x_fixed)^2)),1),
+      event_zone = case_when(
+        x >= -25 & x <= 25 ~ "NZ",
+        (x_fixed < -25 & event_team == home_name) |
+          (x_fixed > 25 & event_team == away_name) ~ "DZ",
+        (x_fixed > 25 & event_team == home_name) |
+          (x_fixed < -25 & event_team == away_name) ~ "OZ"
+      ),
+      last_event_zone = lag(event_zone)
+    ) %>% 
+    ungroup() %>%
+    filter(strength_code == "EV") %>% #filter for even strength
+    filter(strength_state %in% real_strengths) %>% #eliminating weird strengths
+    filter(event_type %in% fenwick) %>%  # unblocked shots only
+    # get rid off oddball last_events, ie "EARLY_INTERMISSION_START"
+    filter(last_event_type %in% c("FACEOFF","GIVEAWAY","TAKEAWAY","BLOCKED_SHOT","HIT",
+                                  "MISSED_SHOT","SHOT","STOP","PENALTY","GOAL")) %>% 
+    # add more feature variables
+    mutate(
+      # these are only for the ST model
+      event_team_skaters = ifelse(event_team == home_name, home_skaters, away_skaters),
+      opponent_team_skaters = ifelse(event_team == home_name, away_skaters, home_skaters),
+      total_skaters_on = event_team_skaters + opponent_team_skaters,
+      # these are in 5v5 model
+      # if last event was shot within 2 seconds rebound == 1
+      rebound = ifelse(last_event_type %in% fenwick & time_since_last <= 2, 1, 0),
+      rush = ifelse(last_event_zone %in% c("NZ","DZ") & time_since_last <= 4, 1, 0),
+      
+      cross_ice_event = ifelse(
+        # indicates goalie had to move from one post to the other
+        last_event_zone == "OZ" &
+          ((lag(y) >  3 & y < -3) | (lag(y) < -3 & y > 3)) &
+          # need some sort of time frame here to indicate shot was quick after goalie had to move
+          time_since_last <= 2, 1, 0
+      ),
+      takeaway = ifelse(last_event_zone == "OZ" & last_event_type == "TAKEAWAY" & time_since_last <= 2, 1, 0),
+      giveaway = ifelse(last_event_zone == "OZ" & last_event_type == "GIVEAWAY" & time_since_last <= 2, 1, 0),
+      forecheck = ifelse(last_event_zone == "OZ" & last_event_type %in% c("TAKEAWAY", "GIVEAWAY") & time_since_last <= 2, 1, 0),
+      empty_net = ifelse(is.na(empty_net) | empty_net == FALSE, FALSE, TRUE),
+      shot_type = secondary_type,
+      goal = ifelse(event_type == "GOAL", 1, 0), 
+      goal_x = case_when(
+        event_team == home_name ~ 89,
+        event_team == away_name ~ -89
+      ),
+      reb_dist = sqrt((goal_x-x_fixed)**2 + y_fixed**2), 
+      first_dist = sqrt((goal_x-last_x_fixed)**2 + last_y_fixed**2),
+      betw_shot_dist = sqrt((last_x_fixed-x_fixed)**2 + (last_y_fixed-y_fixed)**2),
+      angle_change = acos((first_dist**2+reb_dist**2-betw_shot_dist**2)/(2*first_dist*reb_dist)) * (180 / pi)
+    ) 
+  
+  logit <- pbp_shots %>% select(event_type, shot_distance, shot_angle, rush, rebound, cross_ice_event, forecheck, angle_change, goal)
+  # logit$xg <- pbp_shots$xg
+  logit2 <- logit %>% na.omit()
+  
+  init_logit <- glm(goal ~ shot_distance + shot_angle + rush + rebound + cross_ice_event + forecheck + rebound:angle_change,
+                    data = logit2,
+                    family = "binomial")
+}
+```
+
+
+```{r, echo=FALSE, message=FALSE, results='hide', warning=FALSE, include=FALSE}
+#even strength coefficients ####
+
+years <- c("2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023")
+
+coefs_ev <- data.frame()
+for(season in years) {
+  year_model <- xG_by_year(season)
+  year_model_coefs <- summary(year_model)$coefficients[,1:2]
+  coef_year_df <- year_model_coefs %>% 
+    as.list() %>% 
+    data.frame(.)
+  
+  colnames(coef_year_df) = c('X_Int', 'Shot_Distance', 'Shot_Angle', 
+                             'Rush', 'Rebound', 'Cross_Ice', 'Forecheck', 
+                             'X_Int_SD', 'Shot_Distance_SD', 'Shot_Angle_SD',
+                             'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Forecheck_SD')
+  
+  coefs_ev <- rbind(coefs_ev, coef_year_df)
+  print(season)
+  
+}
+
+coefs_ev$season <- years
+```
+
+
+```{r, echo=FALSE}
+#Power Play Model ####
+xG_by_year_pp <- function(year) {
+  
+  real_strengths <- c(
+    "5v5","5v4","5v3","6v5","6v4","6v3","4v3","3v3",
+    "4v4","4v5","3v5","5v6","4v6","3v6","3v4"
+  )
+
+  fenwick <- c("SHOT","MISSED_SHOT","GOAL")
+  
+  pbp_year <- pbp %>% filter(season == year)
+  
+  pbp_shots <- pbp_year %>% 
+    select(-xg) %>% 
+    filter(period_type != "SHOOTOUT") %>% 
+    filter(secondary_type != "Penalty Shot" | is.na(secondary_type)) %>% 
+    group_by(game_id) %>% 
+    mutate(
+      last_event_type = lag(event_type),
+      last_event_team = lag(event_team),
+      time_since_last = game_seconds - lag(game_seconds),
+      last_x_fixed = lag(x_fixed),
+      last_y_fixed = lag(y_fixed),
+      distance_from_last = round(sqrt(((y_fixed - last_y_fixed)^2) + ((x_fixed - last_x_fixed)^2)),1),
+      event_zone = case_when(
+        x >= -25 & x <= 25 ~ "NZ",
+        (x_fixed < -25 & event_team == home_name) |
+          (x_fixed > 25 & event_team == away_name) ~ "DZ",
+        (x_fixed > 25 & event_team == home_name) |
+          (x_fixed < -25 & event_team == away_name) ~ "OZ"
+      ),
+      last_event_zone = lag(event_zone)
+    ) %>% 
+    ungroup() %>%
+    filter(strength_code == "PP") %>% #filter for even strength
+    filter(strength_state %in% real_strengths) %>% #eliminating weird strengths
+    filter(event_type %in% fenwick) %>%  # unblocked shots only
+    # get rid off oddball last_events, ie "EARLY_INTERMISSION_START"
+    filter(last_event_type %in% c("FACEOFF","GIVEAWAY","TAKEAWAY","BLOCKED_SHOT","HIT",
+                                  "MISSED_SHOT","SHOT","STOP","PENALTY","GOAL")) %>% 
+    # add more feature variables
+    mutate(
+      # these are only for the ST model
+      event_team_skaters = ifelse(event_team == home_name, home_skaters, away_skaters),
+      opponent_team_skaters = ifelse(event_team == home_name, away_skaters, home_skaters),
+      total_skaters_on = event_team_skaters + opponent_team_skaters,
+      # these are in 5v5 model
+      # if last event was shot within 2 seconds rebound == 1
+      rebound = ifelse(last_event_type %in% fenwick & time_since_last <= 2, 1, 0),
+      rush = ifelse(last_event_zone %in% c("NZ","DZ") & time_since_last <= 4, 1, 0),
+      
+      cross_ice_event = ifelse(
+        # indicates goalie had to move from one post to the other
+        last_event_zone == "OZ" &
+          ((lag(y) >  3 & y < -3) | (lag(y) < -3 & y > 3)) &
+          # need some sort of time frame here to indicate shot was quick after goalie had to move
+          time_since_last <= 2, 1, 0
+      ),
+      empty_net = ifelse(is.na(empty_net) | empty_net == FALSE, FALSE, TRUE),
+      shot_type = secondary_type,
+      goal = ifelse(event_type == "GOAL", 1, 0), 
+      goal_x = case_when(
+        event_team == home_name ~ 89,
+        event_team == away_name ~ -89
+      ),
+      reb_dist = sqrt((goal_x-x_fixed)**2 + y_fixed**2), 
+      first_dist = sqrt((goal_x-last_x_fixed)**2 + last_y_fixed**2),
+      betw_shot_dist = sqrt((last_x_fixed-x_fixed)**2 + (last_y_fixed-y_fixed)**2),
+      angle_change = acos((first_dist**2+reb_dist**2-betw_shot_dist**2)/(2*first_dist*reb_dist)) * (180 / pi)
+    ) 
+  
+  logit <- pbp_shots %>% select(event_type, shot_distance, shot_angle, rush, rebound, cross_ice_event, angle_change, goal)
+  # logit$xg <- pbp_shots$xg
+  logit2 <- logit %>% na.omit()
+  
+  init_logit <- glm(goal ~ shot_distance + shot_angle + rush + rebound + cross_ice_event + rebound:angle_change,
+                    data = logit2,
+                    family = "binomial")
+  
+}
+```
+
+
+```{r, echo=FALSE, message = FALSE, results='hide', include=FALSE, warning=FALSE}
+#Power play coefficients ####
+
+years <- c("2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023")
+
+coefs_pp <- data.frame()
+for(season in years) {
+  year_model <- xG_by_year_pp(season)
+  year_model_coefs <- summary(year_model)$coefficients[,1:2]
+  coef_year_df <- year_model_coefs %>% 
+    as.list() %>% 
+    data.frame(.)
+  
+  colnames(coef_year_df) = c('X_Int', 'Shot_Distance', 'Shot_Angle', 
+                             'Rush', 'Rebound', 'Cross_Ice', 'Rebound_Angle_Change',
+                             'X_Int_SD', 'Shot_Distance_SD', 'Shot_Angle_SD',
+                             'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Rebound_Angle_Change_SD')
+  
+  coefs_pp <- rbind(coefs_pp, coef_year_df)
+  
+  print(season)
+  
+}
+
+coefs_pp$season <- years
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#filter ev and pp out of data ####
+real_strengths <- c(
+    "5v5","5v4","5v3","6v5","6v4","6v3","4v3","3v3",
+    "4v4","4v5","3v5","5v6","4v6","3v6","3v4"
+  )
+
+  fenwick <- c("SHOT","MISSED_SHOT","GOAL")
+  
+ev <- pbp %>%
+  select(-xg) %>% 
+    filter(period_type != "SHOOTOUT") %>% 
+    filter(secondary_type != "Penalty Shot" | is.na(secondary_type)) %>% 
+    group_by(game_id) %>% 
+    mutate(
+      last_event_type = lag(event_type),
+      last_event_team = lag(event_team),
+      time_since_last = game_seconds - lag(game_seconds),
+      last_x_fixed = lag(x_fixed),
+      last_y_fixed = lag(y_fixed),
+      distance_from_last = round(sqrt(((y_fixed - last_y_fixed)^2) + ((x_fixed - last_x_fixed)^2)),1),
+      event_zone = case_when(
+        x >= -25 & x <= 25 ~ "NZ",
+        (x_fixed < -25 & event_team == home_name) |
+          (x_fixed > 25 & event_team == away_name) ~ "DZ",
+        (x_fixed > 25 & event_team == home_name) |
+          (x_fixed < -25 & event_team == away_name) ~ "OZ"
+      ),
+      last_event_zone = lag(event_zone)
+    ) %>% 
+    ungroup() %>%
+    filter(strength_code == "EV") %>% #filter for even strength
+    filter(strength_state %in% real_strengths) %>% #eliminating weird strengths
+    filter(event_type %in% fenwick) %>%  # unblocked shots only
+    # get rid off oddball last_events, ie "EARLY_INTERMISSION_START"
+    filter(last_event_type %in% c("FACEOFF","GIVEAWAY","TAKEAWAY","BLOCKED_SHOT","HIT",
+                                  "MISSED_SHOT","SHOT","STOP","PENALTY","GOAL")) %>% 
+    # add more feature variables
+    mutate(
+      # these are only for the ST model
+      event_team_skaters = ifelse(event_team == home_name, home_skaters, away_skaters),
+      opponent_team_skaters = ifelse(event_team == home_name, away_skaters, home_skaters),
+      total_skaters_on = event_team_skaters + opponent_team_skaters,
+      # these are in 5v5 model
+      # if last event was shot within 2 seconds rebound == 1
+      rebound = ifelse(last_event_type %in% fenwick & time_since_last <= 2, 1, 0),
+      rush = ifelse(last_event_zone %in% c("NZ","DZ") & time_since_last <= 4, 1, 0),
+      
+      cross_ice_event = ifelse(
+        # indicates goalie had to move from one post to the other
+        last_event_zone == "OZ" &
+          ((lag(y) >  3 & y < -3) | (lag(y) < -3 & y > 3)) &
+          # need some sort of time frame here to indicate shot was quick after goalie had to move
+          time_since_last <= 2, 1, 0
+      ),
+      takeaway = ifelse(last_event_zone == "OZ" & last_event_type == "TAKEAWAY" & time_since_last <= 2, 1, 0),
+      giveaway = ifelse(last_event_zone == "OZ" & last_event_type == "GIVEAWAY" & time_since_last <= 2, 1, 0),
+      forecheck = ifelse(last_event_zone == "OZ" & last_event_type %in% c("TAKEAWAY", "GIVEAWAY") & time_since_last <= 2, 1, 0),
+      empty_net = ifelse(is.na(empty_net) | empty_net == FALSE, FALSE, TRUE),
+      shot_type = secondary_type,
+      goal = ifelse(event_type == "GOAL", 1, 0), 
+      goal_x = case_when(
+        event_team == home_name ~ 89,
+        event_team == away_name ~ -89
+      ),
+      reb_dist = sqrt((goal_x-x_fixed)**2 + y_fixed**2), 
+      first_dist = sqrt((goal_x-last_x_fixed)**2 + last_y_fixed**2),
+      betw_shot_dist = sqrt((last_x_fixed-x_fixed)**2 + (last_y_fixed-y_fixed)**2),
+      angle_change = acos((first_dist**2+reb_dist**2-betw_shot_dist**2)/(2*first_dist*reb_dist)) * (180 / pi)
+    )
+
+pp <- pbp %>% 
+  select(-xg) %>% 
+    filter(period_type != "SHOOTOUT") %>% 
+    filter(secondary_type != "Penalty Shot" | is.na(secondary_type)) %>% 
+    group_by(game_id) %>% 
+    mutate(
+      last_event_type = lag(event_type),
+      last_event_team = lag(event_team),
+      time_since_last = game_seconds - lag(game_seconds),
+      last_x_fixed = lag(x_fixed),
+      last_y_fixed = lag(y_fixed),
+      distance_from_last = round(sqrt(((y_fixed - last_y_fixed)^2) + ((x_fixed - last_x_fixed)^2)),1),
+      event_zone = case_when(
+        x >= -25 & x <= 25 ~ "NZ",
+        (x_fixed < -25 & event_team == home_name) |
+          (x_fixed > 25 & event_team == away_name) ~ "DZ",
+        (x_fixed > 25 & event_team == home_name) |
+          (x_fixed < -25 & event_team == away_name) ~ "OZ"
+      ),
+      last_event_zone = lag(event_zone)
+    ) %>% 
+    ungroup() %>%
+    filter(strength_code == "PP") %>% #filter for even strength
+    filter(strength_state %in% real_strengths) %>% #eliminating weird strengths
+    filter(event_type %in% fenwick) %>%  # unblocked shots only
+    # get rid off oddball last_events, ie "EARLY_INTERMISSION_START"
+    filter(last_event_type %in% c("FACEOFF","GIVEAWAY","TAKEAWAY","BLOCKED_SHOT","HIT",
+                                  "MISSED_SHOT","SHOT","STOP","PENALTY","GOAL")) %>% 
+    # add more feature variables
+    mutate(
+      # these are only for the ST model
+      event_team_skaters = ifelse(event_team == home_name, home_skaters, away_skaters),
+      opponent_team_skaters = ifelse(event_team == home_name, away_skaters, home_skaters),
+      total_skaters_on = event_team_skaters + opponent_team_skaters,
+      # these are in 5v5 model
+      # if last event was shot within 2 seconds rebound == 1
+      rebound = ifelse(last_event_type %in% fenwick & time_since_last <= 2, 1, 0),
+      rush = ifelse(last_event_zone %in% c("NZ","DZ") & time_since_last <= 4, 1, 0),
+      
+      cross_ice_event = ifelse(
+        # indicates goalie had to move from one post to the other
+        last_event_zone == "OZ" &
+          ((lag(y) >  3 & y < -3) | (lag(y) < -3 & y > 3)) &
+          # need some sort of time frame here to indicate shot was quick after goalie had to move
+          time_since_last <= 2, 1, 0
+      ),
+      empty_net = ifelse(is.na(empty_net) | empty_net == FALSE, FALSE, TRUE),
+      shot_type = secondary_type,
+      goal = ifelse(event_type == "GOAL", 1, 0), 
+      goal_x = case_when(
+        event_team == home_name ~ 89,
+        event_team == away_name ~ -89
+      ),
+      reb_dist = sqrt((goal_x-x_fixed)**2 + y_fixed**2), 
+      first_dist = sqrt((goal_x-last_x_fixed)**2 + last_y_fixed**2),
+      betw_shot_dist = sqrt((last_x_fixed-x_fixed)**2 + (last_y_fixed-y_fixed)**2),
+      angle_change = acos((first_dist**2+reb_dist**2-betw_shot_dist**2)/(2*first_dist*reb_dist)) * (180 / pi)
+    ) 
+  
+```
+\newpage
+
+## Results
+
+#### Shot Distance {.tabset}
+
+##### Coefficients
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#Distance coefficient plots
+
+#distance coeffiecient EV ####
+coefs_ev %>%
+  ggplot(aes(x=season, y=Shot_Distance)) + 
+  geom_pointrange(aes(ymin=Shot_Distance-Shot_Distance_SD*1.96,
+                      ymax=Shot_Distance+Shot_Distance_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'EV Shot Distance Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars',
+       x = 'NHL Season', 
+       y = 'Shot Distance Coefficient')
+
+
+
+#distance coefficient PP ####
+coefs_pp %>%
+  ggplot(aes(x=season, y=Shot_Distance)) + 
+  geom_pointrange(aes(ymin=Shot_Distance-Shot_Distance_SD*1.96,
+                      ymax=Shot_Distance+Shot_Distance_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'PP Shot Distance Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars',
+       x = 'NHL Season', 
+       y = 'Shot Distance Coefficient')
+
+```
+
+
+##### Frequency
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#distance distribution EV ####
+ev_dist <- ev %>% 
+  filter(event_type %in% c('GOAL', 'SHOT', 'MISSED_SHOT'), 
+         !is.na(shot_distance), 
+         shot_distance < 70) %>% 
+  mutate(shot_dist_round = plyr::round_any(shot_distance, 10, f = floor)) %>% 
+  group_by(shot_dist_round, season) %>%  
+  summarize(n = n()) %>% 
+  pivot_wider(names_from = shot_dist_round, values_from = n) %>% 
+  mutate(sum = rowSums(across(where(is.numeric)))) %>%
+  mutate(`0` = `0` / sum, `10` = `10` / sum, `20` = `20` / sum,
+         `30` = `30` / sum, `40` = `40` / sum,
+         `50` = `50` / sum, `60` = `60` / sum) %>%
+  pivot_longer(cols = `0`:`60`, names_to = "Shot Distance")
+
+
+ev_dist$`Shot Distance` <- factor(ev_dist$`Shot Distance`, levels=seq(0, 60, 10))
+
+
+
+#distance distribution PP ####
+pp_dist <- pp %>% 
+  filter(event_type %in% c('GOAL', 'SHOT', 'MISSED_SHOT'), 
+         !is.na(shot_distance), 
+         shot_distance < 70) %>% 
+  mutate(shot_dist_round = plyr::round_any(shot_distance, 10, f = floor)) %>% 
+  group_by(shot_dist_round, season) %>%  
+  summarize(n = n()) %>% 
+  pivot_wider(names_from = shot_dist_round, values_from = n) %>% 
+  mutate(sum = rowSums(across(where(is.numeric)))) %>%
+  mutate(`0` = `0` / sum, `10` = `10` / sum, `20` = `20` / sum,
+         `30` = `30` / sum, `40` = `40` / sum,
+         `50` = `50` / sum, `60` = `60` / sum) %>%
+  pivot_longer(cols = `0`:`60`, names_to = "Shot Distance")
+
+
+pp_dist$`Shot Distance` <- factor(pp_dist$`Shot Distance`, levels=seq(0, 60, 10))
+
+my_colors = carto_pal(7, "Bold")
+
+ev_dist_gg <- ev_dist %>% 
+  ggplot(aes(x = as.numeric(season), y = value, color = `Shot Distance`)) + 
+  geom_point() + 
+  geom_line() + 
+  scale_x_continuous("Season", labels = as.numeric(ev_dist$season), breaks = as.numeric(ev_dist$season)) +
+  labs(y = "Proportion of Total Shots", title = "Shot Distance Distribution by Year with Even Strength") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+
+pp_dist_gg <- pp_dist %>% 
+  ggplot(aes(x = as.numeric(season), y = value, color = `Shot Distance`)) + 
+  geom_point() + 
+  geom_line() + 
+  scale_x_continuous("Season", labels = as.numeric(pp_dist$season), breaks = as.numeric(pp_dist$season)) +
+  labs(y = "Proportion of Total Shots", title = "Shot Distance Distribution by Year on Power Plays")  + 
+  ylim(ggplot_build(ev_dist_gg)$layout$panel_scales_y[[1]]$range$range) +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+
+
+
+ev_dist_gg
+pp_dist_gg
+```
+
+
+##### Save Percentage
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#save perc distance ####
+my_colors = carto_pal(7, "Bold")
+
+ev %>%
+  filter(event_type %in% c('SHOT', 'GOAL')) %>% 
+  mutate(distance_round = plyr::round_any(shot_distance, 10, f = floor),
+         goal = ifelse(event_type == "GOAL", 1, 0)) %>% 
+  select(shot_distance, distance_round, season, goal) %>% 
+  group_by(season, distance_round) %>% 
+  summarise(shots = n(),
+            goals = sum(goal),
+            saves = shots - goals,
+            svpct = saves/shots) %>%
+  filter(distance_round <= 60) %>% 
+  ggplot(aes(as.factor(season), svpct, color = as.factor(distance_round), group = distance_round)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("Even Strength Save Percentage by Distance by Year") +
+  xlab("Season") +
+  ylab("Save Percentage") +
+  labs(color = "Shot Distance") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+
+pp %>%
+  filter(event_type %in% c('SHOT', 'GOAL')) %>% 
+  mutate(distance_round = plyr::round_any(shot_distance, 10, f = floor),
+         goal = ifelse(event_type == "GOAL", 1, 0)) %>% 
+  select(shot_distance, distance_round, season, goal) %>% 
+  group_by(season, distance_round) %>% 
+  summarise(shots = n(),
+            goals = sum(goal),
+            saves = shots - goals,
+            svpct = saves/shots) %>%
+  filter(distance_round <= 60) %>% 
+  ggplot(aes(as.factor(season), svpct, color = as.factor(distance_round), group = distance_round)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("Power Play Save Percentage by Distance by Year") +
+  xlab("Season") +
+  ylab("Save Percentage") +
+  labs(color = "Shot Distance") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+
+
+```
+
+#### {-}
+
+We can see that for all years, the distance coefficient is negative for both even strength and power play. This means that as distance from the net increases, the log odds of scoring a goal decreases, which makes intuitive sense (shots further away yield less goals). In the even strength model, the distance coefficient shows no signs of systematic change across seasons. The power play coefficients increase from 2012 to 2019 before dropping back down, although there is overlap in all of the error bars, so it could just be noise. Overall, these coefficients show that the likelihood of scoring a goal based on shot distance alone hasn't much changed. 
+
+Interestingly, the data show a significant spike in the percentage of fenwick events in the 0-10 foot range over the past few seasons for both even strength and power play. On the power play, there appears to be a steady increase in 20-30 and 30-40 ft shots.
+
+Even more interesting is when we dive into the save percentage on shots in certain ranges. For most bins of distances on both even strength and power play, save percentage has stayed relative consistent. However, we see the decline in the 20-30 and 30-40 ft range for both strengths, and in the 10-20 ft range for power play. This effect is even more apparent when expanding the bin range to 20:
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.show="hold", out.width="50%"}
+
+my_colors = carto_pal(4, "Bold")
+
+pbp %>%
+  filter(event_type %in% c('SHOT', 'GOAL'),
+         strength_code == "EV") %>% 
+  mutate(distance_round = plyr::round_any(shot_distance, 20, f = floor),
+         goal = ifelse(event_type == "GOAL", 1, 0)) %>% 
+  select(shot_distance, distance_round, season, goal) %>% 
+  group_by(season, distance_round) %>% 
+  summarise(shots = n(),
+            goals = sum(goal),
+            saves = shots - goals,
+            svpct = saves/shots) %>%
+  filter(distance_round <= 60) %>% 
+  ggplot(aes(as.factor(season), svpct, color = as.factor(distance_round), group = distance_round)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("Even Strength Save Percentage by Distance by Year") +
+  xlab("Season") +
+  ylab("Save Percentage") +
+  labs(color = "Shot Distance") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+
+pbp %>%
+  filter(event_type %in% c('SHOT', 'GOAL'),
+         strength_code == "PP") %>% 
+  mutate(distance_round = plyr::round_any(shot_distance, 20, f = floor),
+         goal = ifelse(event_type == "GOAL", 1, 0)) %>% 
+  select(shot_distance, distance_round, season, goal) %>% 
+  group_by(season, distance_round) %>% 
+  summarise(shots = n(),
+            goals = sum(goal),
+            saves = shots - goals,
+            svpct = saves/shots) %>%
+  filter(distance_round <= 60) %>% 
+  ggplot(aes(as.factor(season), svpct, color = as.factor(distance_round), group = distance_round)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("Power Play Save Percentage by Distance by Year") +
+  xlab("Season") +
+  ylab("Save Percentage") +
+  labs(color = "Shot Distance") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+```
+
+Over time, goalies have been saving 20-40 ft shots less and less. It is unlikely that the play of goalies has declined just for shots of this distance. What's more likely is that shooters have gotten better at shooting these shots and they are taking more of them, as can be seen on power plays.
+
+\newpage
+
+#### Shot Angle {.tabset}
+
+
+##### Coefficients
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#angle coefficient plots
+
+#angle coef EV ####
+coefs_ev %>%
+  ggplot(aes(x=season, y=Shot_Angle)) + 
+  geom_pointrange(aes(ymin=Shot_Angle-Shot_Angle_SD*1.96, 
+                      ymax=Shot_Angle+Shot_Angle_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'EV Shot Angle Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Shot Angle Coefficient')
+
+
+#angle coef PP ####
+coefs_pp %>%
+  ggplot(aes(x=season, y=Shot_Angle)) + 
+  geom_pointrange(aes(ymin=Shot_Angle-Shot_Angle_SD*1.96, 
+                      ymax=Shot_Angle+Shot_Angle_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'PP Shot Angle Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Shot Angle Coefficient')
+
+```
+
+
+##### Frequency
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#angle distribution EV ####
+my_colors = carto_pal(10, "Bold")
+
+ev_angle <- ev %>% 
+  filter(event_type %in% c('GOAL', 'SHOT', 'MISSEDD_SHOT'), 
+         !is.na(shot_angle), 
+         shot_angle < 100) %>% 
+  mutate(shot_angle_round = 10*(shot_angle %/% 10)) %>% 
+  group_by(shot_angle_round, season) %>%  
+  summarize(n = n()) %>% 
+  pivot_wider(names_from = shot_angle_round, values_from = n) %>% 
+  mutate(sum = rowSums(across(where(is.numeric)))) %>%
+  mutate(`0` = `0` / sum, `10` = `10` / sum, `20` = `20` / sum, `30` = `30` / sum, `40` = `40` / sum, 
+         `50` = `50` / sum, `60` = `60` / sum, `70` = `70` / sum, `80` = `80` / sum, `90` = `90` / sum) %>%
+  pivot_longer(cols = `0`:`90`, names_to = "Shot Angle")
+
+ev_angle %>% 
+  ggplot(aes(x = as.numeric(season), y = value, color = `Shot Angle`)) + 
+  geom_point() + 
+  geom_line() + 
+  scale_x_continuous("Season", labels = as.numeric(ev_angle$season), breaks = as.numeric(ev_angle$season)) +
+  labs(y = "Proportion of Total Shots", title = "Shot Angles Distribution by Year with Even Strength") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+
+
+
+#angle distribution PP ####
+pp_angle <- pp %>% 
+  filter(event_type %in% c('GOAL', 'SHOT', 'MISSED_SHOT'), 
+         !is.na(shot_angle), 
+         shot_angle < 100) %>% 
+  mutate(shot_angle_round = 10*(shot_angle %/% 10)) %>% 
+  group_by(shot_angle_round, season) %>%  
+  summarize(n = n()) %>% 
+  pivot_wider(names_from = shot_angle_round, values_from = n) %>% 
+  mutate(sum = rowSums(across(where(is.numeric)))) %>%
+  mutate(`0` = `0` / sum, `10` = `10` / sum, `20` = `20` / sum, `30` = `30` / sum, `40` = `40` / sum, 
+         `50` = `50` / sum, `60` = `60` / sum, `70` = `70` / sum, `80` = `80` / sum, `90` = `90` / sum) %>%
+  pivot_longer(cols = `0`:`90`, names_to = "Shot Angle")
+
+pp_angle %>% 
+  ggplot(aes(x = as.numeric(season), y = value, color = `Shot Angle`)) + 
+  geom_point() + 
+  geom_line() + 
+  scale_x_continuous("Season", labels = as.numeric(ev_angle$season), breaks = as.numeric(ev_angle$season)) +
+  labs(y = "Proportion of Total Shots", title = "Shot Angles Distribution by Year on Power Play") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+
+```
+
+
+##### Save Percentage
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+my_colors = carto_pal(9, "Bold")
+
+ev %>%
+  filter(event_type %in% c('SHOT', 'GOAL')) %>% 
+  mutate(angle_round = plyr::round_any(shot_angle, 10, f = floor),
+         goal = ifelse(event_type == "GOAL", 1, 0)) %>% 
+  select(shot_distance, angle_round, season, goal) %>% 
+  group_by(season, angle_round) %>% 
+  summarise(shots = n(),
+            goals = sum(goal),
+            saves = shots - goals,
+            svpct = saves/shots) %>%
+  na.omit() %>% 
+  filter(angle_round <= 80) %>% 
+  ggplot(aes(as.numeric(season), svpct, color = as.factor(angle_round))) +
+  geom_point() +
+  geom_line() +
+  labs(x = "Season", y = "Save Percentage", color = "Shot Angle", title= "EV Save Percentage by Angle by Year") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+
+pp %>%
+  filter(event_type %in% c('SHOT', 'GOAL')) %>% 
+  mutate(angle_round = plyr::round_any(shot_angle, 10, f = floor),
+         goal = ifelse(event_type == "GOAL", 1, 0)) %>% 
+  select(shot_distance, angle_round, season, goal) %>% 
+  group_by(season, angle_round) %>% 
+  summarise(shots = n(),
+            goals = sum(goal),
+            saves = shots - goals,
+            svpct = saves/shots) %>%
+  na.omit() %>% 
+  filter(angle_round <= 80) %>% 
+  ggplot(aes(as.numeric(season), svpct, color = as.factor(angle_round))) +
+  geom_point() +
+  geom_line() +
+  labs(x = "Season", y = "Save Percentage", color = "Shot Angle", title= "PP Save Percentage by Angle by Year") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+```
+
+#### {-}
+
+Similar to the distance coefficients, the shot angle coefficients for both even strength and power play are negative across all seasons. Shot angle is measured in degrees from the middle of the ice (a shot with angle 0 is right in front of the goalie, a shot with angle 90 is from the goal line). Therefore, it is no surprise that as angle increases, the log odds of scoring decreases. What's interesting is the general upward trends (closer to 0) in the coefficients in both strength states. In general, this means that increasing shot angle is more likely to be a goal than it once was. Once again, this could show that shooters have improved at scoring from "tougher" angles. We can see that save percentage has declined for most angles above 20 degrees (even strength only, power play seems to be quite random).
+
+\newpage
+
+#### Rebound Events {.tabset}
+ 
+
+##### Coefficients
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#reboound coef plots
+
+
+#rebound coef EV ####
+coefs_ev %>%
+  ggplot(aes(x=season, y=Rebound)) + 
+  geom_pointrange(aes(ymin=Rebound-Rebound_SD*1.96, 
+                      ymax=Rebound+Rebound_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'EV Rebound Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Rebound Coefficient')
+
+#rebound coefs PP ####
+coefs_pp %>%
+  ggplot(aes(x=season, y=Rebound)) + 
+  geom_pointrange(aes(ymin=Rebound-Rebound_SD*1.96, 
+                      ymax=Rebound+Rebound_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'PP Rebound Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Rebound Coefficient')
+```
+
+##### Frequency
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#rebound distribution PP ####
+
+my_colors = carto_pal(3, "Bold")
+
+pp_rebound <- pp %>% 
+  group_by(season, rebound, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(rebound == 1) %>% 
+  # group_by(season) %>% 
+  # summarize(rebound = mean(rebound)) %>% 
+  ggplot(aes(x=as.factor(season), y=per, fill = factor(event_type, levels = c('MISSED_SHOT', 'SHOT', 'GOAL')))) + 
+  # geom_point(size = 3) + 
+  # geom_line() + 
+  # expand_limits(y=0) +
+  geom_col(color = 'black') +
+  labs(title = 'Power Play Rebound Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots in Season',
+       fill = 'Shot Result')  +
+  scale_fill_manual(values = my_colors) +
+  theme_bw()
+
+#rebound distribution EV ####
+ev_rebound <- ev %>% 
+  group_by(season, rebound, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(rebound == 1) %>% 
+  # group_by(season) %>% 
+  # summarize(rebound = mean(rebound)) %>% 
+  ggplot(aes(x=as.factor(season), y=per, fill=factor(event_type, levels = c('MISSED_SHOT', 'SHOT', 'GOAL')))) + 
+  # geom_point(size = 3) + 
+  # geom_line() + 
+  geom_col(color = 'black') +
+  labs(title = 'Even Strength Rebound Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots in Season',
+       fill = 'Shot Result')+ 
+  ylim(ggplot_build(pp_rebound)$layout$panel_scales_y[[1]]$range$range) +
+  scale_fill_manual(values = my_colors) +
+  theme_bw()
+
+ev_rebound
+pp_rebound
+```
+
+##### Save Percentage
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+ev %>% 
+  filter(rebound == 1,
+         event_type %in% c("SHOT", "GOAL")) %>% 
+  group_by(season) %>% 
+  summarise(goals = sum(goal),
+            shots = n(),
+            saves = n() - sum(goal),
+            svpct = saves/shots) %>%
+  ungroup() %>% 
+  ggplot(aes(as.numeric(season), svpct)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ggtitle("Even Strength Rebound Save Percentage by Year") +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ylab("Save Percentage") +
+  theme_bw()
+
+pp %>% 
+  filter(rebound == 1,
+         event_type %in% c("SHOT", "GOAL")) %>% 
+  group_by(season) %>% 
+  summarise(goals = sum(goal),
+            shots = n(),
+            saves = n() - sum(goal),
+            svpct = saves/shots) %>% 
+  ggplot(aes(as.numeric(season), svpct)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ggtitle("Power Play Rebound Save Percentage by Year") +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ylab("Save Percentage") +
+  theme_bw()
+
+
+```
+
+
+#### {-}
+
+The rebound coefficients are positive across all seasons prior to 2023 for both even strength and power play. This means that a rebound shot will increase the log odds of scoring. However, these coefficients have dropped over time. For even strength, there was a steady drop until 2019 where a significant drop occurred (2018 and 2019 have no overlap of 95% confidence intervals). This was followed by another massive drop in 2023, where it fell negative. This means that a rebound had almost no postive or negative effect on the likelihood of a goal. Similar patterns can be observed in the power play model.
+
+This large drop off in 2023 coincides with a spike in the frequency of rebound events. However, this spike is only accounted by missed shots. Shots and goals have remained steady. This is a strange anomaly, but it could be that the NHL's play by play data has become more accurate over time. If this is the case, the coefficient for 2023 may be closer to the "true" effect that rebounds have on scoring.
+
+\newpage
+
+#### Rush Events {.tabset}
+ 
+
+##### Coefficients
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#rush coefficient plots
+
+#rush coefs EV ####
+coefs_ev %>%
+  ggplot(aes(x=season, y=Rush)) + 
+  geom_pointrange(aes(ymin=Rush-Rush_SD*1.96, 
+                      ymax=Rush+Rush_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'EV Rush Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Rush Coefficient')
+
+#rush coefs PP ####
+coefs_pp %>%
+  ggplot(aes(x=season, y=Rush)) + 
+  geom_pointrange(aes(ymin=Rush-Rush_SD*1.96, 
+                      ymax=Rush+Rush_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'PP Rush Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Rush Coefficient')
+```
+
+##### Frequency
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#rush distribution EV ####
+ev_rush <- ev %>% 
+  group_by(season, rush, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(rush == 1) %>% 
+  ggplot(aes(x=as.factor(season), y=per, fill=factor(event_type, levels = c('MISSED_SHOT', 'SHOT', 'GOAL')))) + 
+  # geom_point(size = 3) + 
+  # geom_line() + 
+  # expand_limits(y=0) +
+  geom_col(color = 'black') +
+  labs(title = 'Even Strength Rush Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots in Season',
+       fill = 'Shot Result') +
+  scale_fill_manual(values = my_colors) +
+  theme_bw()
+
+ev_rush
+
+#rush distribution PP ####
+pp %>% 
+  group_by(season, rush, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(rush == 1) %>% 
+  ggplot(aes(x=as.factor(season), y=per, fill=factor(event_type, levels = c('MISSED_SHOT', 'SHOT', 'GOAL')))) + 
+  # geom_point(size = 3) + 
+  # geom_line() + 
+  # expand_limits(y=0) +
+  geom_col(color = 'black') +
+  labs(title = 'Power Play Rush Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots in Season',
+       fill = 'Shot Result') + 
+  ylim(ggplot_build(ev_rush)$layout$panel_scales_y[[1]]$range$range) +
+  scale_fill_manual(values = my_colors) +
+  theme_bw()
+```
+
+##### Save Percentage
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+ev %>% 
+  filter(rush == 1,
+         event_type %in% c("SHOT", "GOAL")) %>% 
+  group_by(season) %>% 
+  summarise(goals = sum(goal),
+            shots = n(),
+            saves = n() - sum(goal),
+            svpct = saves/shots) %>% 
+  ggplot(aes(as.numeric(season), svpct)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ggtitle("Even Strength Rush Save Percentage by Year") +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ylab("Save Percentage") +
+  theme_bw()
+
+pp %>% 
+  filter(rush == 1,
+         event_type %in% c("SHOT", "GOAL")) %>% 
+  group_by(season) %>% 
+  summarise(goals = sum(goal),
+            shots = n(),
+            saves = n() - sum(goal),
+            svpct = saves/shots) %>% 
+  ggplot(aes(as.numeric(season), svpct)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ggtitle("Power Play Rush Save Percentage by Year") +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ylab("Save Percentage") +
+  theme_bw()
+
+```
+
+#### {-}
+
+The rush coefficients are positive across all season, which means shots defined as a rush lead to a higher chance of a goal. However, the rush coefficient shows almost no pattern across the coefficients, other than a drop in even strength for 2023, which again could point to some systematic change in the way the data is collected.
+
+\newpage
+
+#### Cross Ice Events {.tabset}
+
+##### Coefficients
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#cross ice coefficient plots
+
+#cross ice coefs EV ####
+coefs_ev %>%
+  ggplot(aes(x=season, y=Cross_Ice)) + 
+  geom_pointrange(aes(ymin=Cross_Ice-Cross_Ice_SD*1.96, 
+                      ymax=Cross_Ice+Cross_Ice_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'EV Cross Ice Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Cross Ice Coefficient')
+
+#cross ice coefs PP ####
+coefs_pp %>%
+  ggplot(aes(x=season, y=Cross_Ice)) + 
+  geom_pointrange(aes(ymin=Cross_Ice-Cross_Ice_SD*1.96, 
+                      ymax=Cross_Ice+Cross_Ice_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'PP Cross Ice Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Cross Ice Coefficient')
+```
+
+##### Frequency
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+#cross ice distribution EV ####
+ev_cross <- ev %>% 
+  filter(!is.na(cross_ice_event)) %>% 
+  group_by(season, cross_ice_event, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(cross_ice_event == 1) %>% 
+  ggplot(aes(x=as.factor(season), y=per, fill = factor(event_type, levels = c('MISSED_SHOT', 'SHOT', 'GOAL')))) + 
+  # geom_point(size = 3) + 
+  # geom_line() + 
+  # expand_limits(y=0) + 
+  geom_col(color = 'black') +
+  labs(title = 'Even Strength Cross Ice Event Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots per Year',
+       fill = 'Shot Result') +
+  scale_fill_manual(values = my_colors) +
+  theme_bw()
+
+#cross ice distribution PP ####
+pp_cross <- pp %>% 
+  filter(!is.na(cross_ice_event)) %>% 
+  group_by(season, cross_ice_event, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(cross_ice_event == 1) %>% 
+#   group_by(season) %>% 
+#   summarize(cross_ice_event = mean(cross_ice_event)) %>% 
+  ggplot(aes(x=as.factor(season), y=per, fill=factor(event_type, levels = c('MISSED_SHOT', 'SHOT', 'GOAL')))) + 
+  # geom_point(size = 3) + 
+  # geom_line() + 
+  geom_col(color = 'black') +
+  labs(title = 'Power Play Cross Ice Event Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots in Season',
+       fill = 'Shot Result') +
+  ylim(ggplot_build(ev_cross)$layout$panel_scales_y[[1]]$range$range) +
+  scale_fill_manual(values = my_colors) +
+  theme_bw()
+
+ev_cross
+pp_cross
+```
+
+##### Save Percentage
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+ev %>% 
+  filter(cross_ice_event == 1,
+         event_type %in% c("SHOT", "GOAL")) %>% 
+  group_by(season) %>% 
+  summarise(goals = sum(goal),
+            shots = n(),
+            saves = n() - sum(goal),
+            svpct = saves/shots) %>% 
+  ggplot(aes(as.numeric(season), svpct)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ggtitle("Even Strength Cross Ice Event Save Percentage by Year") +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ylab("Save Percentage") +
+  theme_bw()
+
+pp %>% 
+  filter(cross_ice_event == 1,
+         event_type %in% c("SHOT", "GOAL")) %>% 
+  group_by(season) %>% 
+  summarise(goals = sum(goal),
+            shots = n(),
+            saves = n() - sum(goal),
+            svpct = saves/shots) %>% 
+  ggplot(aes(as.numeric(season), svpct)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ggtitle("Power Play Cross Ice Event Save Percentage by Year") +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ylab("Save Percentage") +
+  theme_bw()
+```
+
+#### {-}
+
+Cross Ice coefficients are positive for all seasons and show no patterns. Once again we observe a spike in frequency in 2023. For even strength, save percentage seems to be gradually improving for cross ice events.
+
+\newpage
+
+#### Forecheck Events {.tabset}
+
+##### Coefficients
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#forecheck coefficient plots
+
+#forecheck coefs EV ####
+coefs_ev %>%
+  ggplot(aes(x=season, y=Forecheck)) + 
+  geom_pointrange(aes(ymin=Forecheck-Forecheck_SD*1.96, 
+                      ymax=Forecheck+Forecheck_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'EV Forecheck Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Takeaway Coefficient')
+```
+
+##### Frequency
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#forecheck freq EV ####
+ev %>% 
+  filter(!is.na(forecheck)) %>% 
+  group_by(season, forecheck, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(forecheck == 1) %>% 
+  ggplot(aes(x=as.factor(season), y=per, fill = factor(event_type, levels = c('MISSED_SHOT', 'SHOT', 'GOAL')))) + 
+  # geom_point(size = 3) + 
+  # geom_line() + 
+  # expand_limits(y=0) +
+  geom_col(color = 'black') +
+  labs(title = 'Even Strength Forecheck Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots in Season',
+       fill = 'Shot Result') +
+  scale_fill_manual(values = my_colors) +
+  theme_bw()
+```
+
+##### Save Percentage
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ev %>% 
+  filter(forecheck == 1,
+         event_type %in% c("SHOT", "GOAL")) %>% 
+  group_by(season) %>% 
+  summarise(goals = sum(goal),
+            shots = n(),
+            saves = n() - sum(goal),
+            svpct = saves/shots) %>% 
+  ggplot(aes(as.numeric(season), svpct)) +
+  geom_point(size = 3) +
+  geom_line() +
+  ggtitle("Even Strength Forecheck Save Percentage by Year") +
+  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  ylab("Save Percentage") + 
+  theme_bw()
+
+
+
+```
+
+#### {-}
+
+Forecheck coefficients (even strength only) are positive for all seasons but show no pattern over time.
+
+#### Angle Change on Rebound Shots {.tabset}
+
+##### Coefficients
+
+```{r, echo =FALSE, message=FALSE, warning=FALSE, fig.show="hold", out.width="50%"}
+coefs_ev %>%
+  ggplot(aes(x=season, y=Rebound_Angle_Change)) + 
+  geom_pointrange(aes(ymin=Rebound_Angle_Change-Rebound_Angle_Change_SD*1.96, 
+                      ymax=Rebound_Angle_Change+Rebound_Angle_Change_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'EV Rebound Angle Change Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Rebound Angle Change Coefficient')
+
+coefs_pp %>%
+  ggplot(aes(x=season, y=Rebound_Angle_Change)) + 
+  geom_pointrange(aes(ymin=Rebound_Angle_Change-Rebound_Angle_Change_SD*1.96, 
+                      ymax=Rebound_Angle_Change+Rebound_Angle_Change_SD*1.96)) + 
+  theme_bw() + 
+  labs(title = 'PP Rebound Angle Change Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Rebound Angle Change Coefficient')
+```
+
+##### Frequency
+
+```{r, echo =FALSE, message=FALSE, warning=FALSE, fig.show="hold", out.width="50%"}
+#rebound angle change distribution EV ####
+my_colors = carto_pal(9, "Bold")
+
+ev_reb_angle <- ev %>% 
+  filter(event_type %in% c('GOAL', 'SHOT', 'BLOCKED_SHOT'), 
+         !is.na(angle_change), 
+         angle_change < 180) %>% 
+  mutate(angle_change_round = 20*(angle_change %/% 20)) %>% 
+  group_by(angle_change_round, season) %>%  
+  summarize(n = n()) %>% 
+  pivot_wider(names_from = angle_change_round, values_from = n) %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(sum = rowSums(across(where(is.numeric)))) %>%
+  mutate(`0` = `0` / sum, `20` = `20` / sum, `40` = `40` / sum, `60` = `60` / sum, `80` = `80` / sum, 
+         `100` = `100` / sum, `120` = `120` / sum, `140` = `140` / sum, `160` = `160` / sum) %>%
+  pivot_longer(cols = `0`:`160`, names_to = "Angle Change")
+
+ev_reb_angle$`Angle Change` <- factor(ev_reb_angle$`Angle Change`, levels=seq(0, 160, 20))
+
+ev_reb_angle %>% 
+  ggplot(aes(x = as.numeric(season), y = value, color = `Angle Change`)) + 
+  geom_point() + 
+  geom_line() + 
+  scale_x_continuous("Season", labels = as.numeric(ev_reb_angle$season), breaks = as.numeric(ev_reb_angle$season)) +
+  labs(y = "Proportion of Rebounds", title = "Frequency of Angle Change from Previous Shot, by Year, with Even Strength") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+
+
+
+#angle distribution PP ####
+pp_reb_angle <- pp %>% 
+  filter(event_type %in% c('GOAL', 'SHOT', 'BLOCKED_SHOT'), 
+         !is.na(angle_change), 
+         angle_change < 180) %>% 
+  mutate(angle_change_round = 20*(angle_change %/% 20)) %>% 
+  group_by(angle_change_round, season) %>%  
+  summarize(n = n()) %>% 
+  pivot_wider(names_from = angle_change_round, values_from = n) %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(sum = rowSums(across(where(is.numeric)))) %>%
+  mutate(`0` = `0` / sum, `20` = `20` / sum, `40` = `40` / sum, `60` = `60` / sum, `80` = `80` / sum, 
+         `100` = `100` / sum, `120` = `120` / sum, `140` = `140` / sum, `160` = `160` / sum) %>%
+  pivot_longer(cols = `0`:`160`, names_to = "Angle Change")
+
+pp_reb_angle$`Angle Change` <- factor(pp_reb_angle$`Angle Change`, levels=seq(0, 160, 20))
+
+pp_reb_angle %>% 
+  ggplot(aes(x = as.numeric(season), y = value, color = `Angle Change`)) + 
+  geom_point() + 
+  geom_line() + 
+  scale_x_continuous("Season", labels = as.numeric(pp_reb_angle$season), breaks = as.numeric(pp_reb_angle$season)) +
+  labs(y = "Proportion of Rebounds", title = "Frequency of Angle Change from Previous Shot, by Year, on Power Play") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+```
+
+#### {-}
+
+The angle change coefficients for rebound shots is slightly positive for all seasons, meaning that a rebound with a higher angle change from the previous shot is more likely to end up in a goal. The coefficients for even strength fell and then came back up, however, this is likely just due to randomness.
+
+At this point, we have seen signs that seem to indicate an increase in shot quality from shooters. To officially put this to the test, we built another logistic model using the same variables, but with one key difference: instead of building the model on each individual season, we trained the model on every season before 2018 (in most cases, we observed the most drastic changes 2018 and beyond). We then used this model to predict expected goals and expected fenwick save percentage (1 - Average xG). We were curious to know if on average, expected goals was increasing given shot data from before the decline. If this is the case, we can safely say that shot quality has increased.
+
+
+```{r, echo=FALSE, results='hide', include=FALSE}
+shots12_18 <- ev %>% 
+  filter(season < 2018) %>% 
+  select(event_type, shot_distance, shot_angle, rush, rebound, cross_ice_event, forecheck, angle_change, goal) %>% 
+  na.omit()
+
+model12_18 <- glm(goal ~ shot_distance + shot_angle + rush + rebound + cross_ice_event + forecheck + rebound:angle_change,
+                  data = shots12_18,
+                  family = "binomial")
+
+summary(model12_18)
+
+1 - mean(predict(model12_18, shots12_18, type = "response"))
+
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+shot_type_change = data.frame()
+for (year in 2012:2023){
+  shots <- ev %>% 
+    filter(season == year) %>% 
+    select(season, event_type, shot_distance, shot_angle, rush, rebound, forecheck, cross_ice_event, angle_change, goal) %>%
+    na.omit()
+  sv_pct <- 1 - mean(predict(model12_18, shots, type = "response"))
+  
+  shot_type_change = rbind(shot_type_change, c(year, sv_pct))
+}
+
+colnames(shot_type_change) = c("Season", "UFR")
+my_colors = carto_pal(2, "Bold")
+
+pbp %>% 
+  filter(event_type %in% c("GOAL", "SHOT", "MISSED_SHOT"), 
+         strength_state == "5v5") %>%
+  group_by(season) %>% 
+  summarize(`Save Percentage` = sum(event_type == "SHOT" | event_type == "MISSED_SHOT") / n()) %>% 
+  mutate(`Predicted from Shots` = shot_type_change$UFR) %>% 
+  pivot_longer(!season, names_to = "Data Origin") %>% 
+  # mutate(color = case_when(`Data Origin` == "Predicted from Shots" ~ "#003087", 
+  #        `Data Origin` == "Save Percentage" ~ "#C8102E")) %>% 
+  ggplot(aes(x = as.factor(season), y = value, color = `Data Origin`, group = `Data Origin`)) + 
+  geom_point(size = 3, alpha = 0.9) +
+  geom_line() + 
+  labs(title = "5v5 Fenwick Save Percentage by Year", x = "Season", y = "Fenwick Save Percentage") + 
+  scale_colour_manual(values = my_colors,
+                      labels = c("Expected Fenwick SV%", "Observed Fenwick SV%")) +
+  theme_bw()
+  # geom_segment(aes(x = 2012, xend = 2018, y = 1 - mean(predict(model23, shots12_18, type = "response")),
+  #                  yend = 1 - mean(predict(model23, shots12_18, type = "response"))))
+```
+
+*Note*: Fenwick Save Percentage includes missed shots in the calculation, yielding a higher percentage (missed shots will never be goals)
+
+As you can see, when we apply this model to recent seasons, we see a decline in expected fenwick save percentage very similar to the decline in observed save percentage. This shows that, on average, shot quality (as determined by 2012-17) has increased. The same trend can be observed on the power play:
+
+```{r, echo=FALSE, results='hide', include=FALSE}
+shots12_18pp <- pp %>% 
+  filter(season < 2018) %>% 
+  select(event_type, shot_distance, shot_angle, rush, rebound, cross_ice_event, angle_change, goal) %>% 
+  na.omit()
+
+model12_18pp <- glm(goal ~ shot_distance + shot_angle + rush + rebound + cross_ice_event + rebound:angle_change,
+                  data = shots12_18pp,
+                  family = "binomial")
+
+summary(model12_18pp)
+
+1 - mean(predict(model12_18pp, shots12_18pp, type = "response"))
+
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+shot_type_changepp = data.frame()
+for (year in 2012:2023){
+  shots <- pp %>% 
+    filter(season == year) %>% 
+    select(season, event_type, shot_distance, shot_angle, rush, rebound, cross_ice_event, angle_change, goal) %>%
+    na.omit()
+  sv_pct <- 1 - mean(predict(model12_18pp, shots, type = "response"))
+  
+  shot_type_changepp = rbind(shot_type_changepp, c(year, sv_pct))
+}
+
+colnames(shot_type_changepp) = c("Season", "UFR")
+my_colors = carto_pal(2, "Bold")
+
+pbp %>% 
+  filter(event_type %in% c("GOAL", "SHOT", "MISSED_SHOT"), 
+         strength_code == "PP") %>%
+  group_by(season) %>% 
+  summarize(`Save Percentage` = sum(event_type == "SHOT" | event_type == "MISSED_SHOT") / n()) %>% 
+  mutate(`Predicted from Shots` = shot_type_changepp$UFR) %>% 
+  pivot_longer(!season, names_to = "Data Origin") %>% 
+  # mutate(color = case_when(`Data Origin` == "Predicted from Shots" ~ "#003087", 
+  #        `Data Origin` == "Save Percentage" ~ "#C8102E")) %>% 
+  ggplot(aes(x = as.factor(season), y = value, color = `Data Origin`, group = `Data Origin`)) + 
+  geom_point(size = 3, alpha = 0.9) +
+  geom_line() + 
+  labs(title = "Power Play Fenwick Save Percentage by Year", x = "Season", y = "Fenwick Save Percentage") + 
+  scale_colour_manual(values = my_colors,
+                      labels = c("Expected Fenwick SV%", "Observed Fenwick SV%")) + 
+  theme_bw()
+  # geom_segment(aes(x = 2012, xend = 2018, y = 1 - mean(predict(model23, shots12_18, type = "response")),
+  #                  yend = 1 - mean(predict(model23, shots12_18, type = "response"))))
+```
+
+
+#### Limitations
+
+The nature of the play by play data should be of some concern in regards to the results. First of all, we are unsure how accurate the data truly are. Some anomalies such as the spike in rebound percentage could point to the fact that the data are becoming more accurate than they once were in regards to factors such as distance, angle, and time of the game. On top of that, without true labels defining the binary descriptors such as rebound, rush, cross ice event, it is impossible to accurately assign these. We assigned these variables based on strict definitions, but in reality these events can take many different forms.
+
+Our external advisor, Sam Ventura of the Buffalo Sabres, was kind enough to provide a sample of privately collected shot data. Due to the nature of how it is tracked, this data is much more accurate and includes true labels for the binary variables used in our model. The privately tracked data includes data from the 2016 season onwards.
+
+
+```{r, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
+shot_pct <- sample_shot %>%
+  filter(meta_situation == "5-on-5") %>% 
+  group_by(season) %>% 
+  summarize(save_pct = 1 - mean(is_goal)) %>% 
+  mutate(data = "Privately Tracked")
+
+yearly_pct <- pbp %>% 
+  filter(event_type %in% c("GOAL", "SHOT", "MISSED_SHOT"), 
+         season %in% c(2016:2023),
+         strength_state == "5v5"
+         ) %>%
+  group_by(season) %>% 
+  summarize(save_pct = sum(event_type == "SHOT" | event_type == "MISSED_SHOT") / n()) %>% 
+  mutate(season = as.character(season), data = "hockeyR")
+
+my_colors = carto_pal(2, "Bold")
+
+rbind(shot_pct, yearly_pct) %>% 
+  ggplot(aes(x = as.factor(season), y = save_pct, color = data, group = data)) + 
+  geom_point(size = 3) +
+  geom_line() +
+  labs(title = "5v5 Fenwick Save Percentage by Year",
+       x = "Season",
+       y = "Save Percentage") +
+  scale_color_manual(values = my_colors) +
+  theme_bw()
+```
+
+The figure above shows that overall, 5v5 fenwick save percentage is pretty consistent across both data sets, with the private data being slightly higher across all years. This is likely a result of more precision in tracking missed shots within the private data (more missed shots -> higher fenwick save percentage)
+
+```{r, echo=FALSE, message=FALSE, results='hide', warning=FALSE, include=FALSE}
+# PUBLIC even strength coefficients ####
+
+pub_xG_by_year <- function(year) {
+  
+  real_strengths <- c(
+    "5v5","5v4","5v3","6v5","6v4","6v3","4v3","3v3",
+    "4v4","4v5","3v5","5v6","4v6","3v6","3v4"
+  )
+  
+  fenwick <- c("SHOT","MISSED_SHOT","GOAL")
+  
+  pbp_year <- pbp %>% filter(season == year)
+  
+  pbp_shots <- pbp_year %>% 
+    select(-xg) %>% 
+    filter(period_type != "SHOOTOUT") %>% 
+    filter(secondary_type != "Penalty Shot" | is.na(secondary_type)) %>% 
+    group_by(game_id) %>% 
+    mutate(
+      last_event_type = lag(event_type),
+      last_event_team = lag(event_team),
+      time_since_last = game_seconds - lag(game_seconds),
+      last_x_fixed = lag(x_fixed),
+      last_y_fixed = lag(y_fixed),
+      distance_from_last = round(sqrt(((y_fixed - last_y_fixed)^2) + ((x_fixed - last_x_fixed)^2)),1),
+      event_zone = case_when(
+        x >= -25 & x <= 25 ~ "NZ",
+        (x_fixed < -25 & event_team == home_name) |
+          (x_fixed > 25 & event_team == away_name) ~ "DZ",
+        (x_fixed > 25 & event_team == home_name) |
+          (x_fixed < -25 & event_team == away_name) ~ "OZ"
+      ),
+      last_event_zone = lag(event_zone)
+    ) %>% 
+    ungroup() %>%
+    filter(strength_code == "EV") %>% #filter for even strength
+    filter(strength_state %in% real_strengths) %>% #eliminating weird strengths
+    filter(event_type %in% fenwick) %>%  # unblocked shots only
+    # get rid off oddball last_events, ie "EARLY_INTERMISSION_START"
+    filter(last_event_type %in% c("FACEOFF","GIVEAWAY","TAKEAWAY","BLOCKED_SHOT","HIT",
+                                  "MISSED_SHOT","SHOT","STOP","PENALTY","GOAL")) %>% 
+    # add more feature variables
+    mutate(
+      # these are only for the ST model
+      event_team_skaters = ifelse(event_team == home_name, home_skaters, away_skaters),
+      opponent_team_skaters = ifelse(event_team == home_name, away_skaters, home_skaters),
+      total_skaters_on = event_team_skaters + opponent_team_skaters,
+      # these are in 5v5 model
+      # if last event was shot within 2 seconds rebound == 1
+      rebound = ifelse(last_event_type %in% fenwick & time_since_last <= 2, 1, 0),
+      rush = ifelse(last_event_zone %in% c("NZ","DZ") & time_since_last <= 4, 1, 0),
+      
+      cross_ice_event = ifelse(
+        # indicates goalie had to move from one post to the other
+        last_event_zone == "OZ" &
+          ((lag(y) >  3 & y < -3) | (lag(y) < -3 & y > 3)) &
+          # need some sort of time frame here to indicate shot was quick after goalie had to move
+          time_since_last <= 2, 1, 0
+      ),
+      takeaway = ifelse(last_event_zone == "OZ" & last_event_type == "TAKEAWAY" & time_since_last <= 2, 1, 0),
+      giveaway = ifelse(last_event_zone == "OZ" & last_event_type == "GIVEAWAY" & time_since_last <= 2, 1, 0),
+      forecheck = ifelse(last_event_zone == "OZ" & last_event_type %in% c("TAKEAWAY", "GIVEAWAY") & time_since_last <= 2, 1, 0),
+      empty_net = ifelse(is.na(empty_net) | empty_net == FALSE, FALSE, TRUE),
+      shot_type = secondary_type,
+      goal = ifelse(event_type == "GOAL", 1, 0), 
+      goal_x = case_when(
+        event_team == home_name ~ 89,
+        event_team == away_name ~ -89
+      ),
+      reb_dist = sqrt((goal_x-x_fixed)**2 + y_fixed**2), 
+      first_dist = sqrt((goal_x-last_x_fixed)**2 + last_y_fixed**2),
+      betw_shot_dist = sqrt((last_x_fixed-x_fixed)**2 + (last_y_fixed-y_fixed)**2),
+      angle_change = acos((first_dist**2+reb_dist**2-betw_shot_dist**2)/(2*first_dist*reb_dist)) * (180 / pi)
+    ) 
+  
+  logit <- pbp_shots %>% select(event_type, shot_distance, shot_angle, rush, rebound, cross_ice_event, forecheck, goal)
+  # logit$xg <- pbp_shots$xg
+  logit2 <- logit %>% na.omit()
+  
+  init_logit <- glm(goal ~ shot_distance + shot_angle + rush + rebound + cross_ice_event + forecheck,
+                    data = logit2,
+                    family = "binomial")
+}
+
+years <- c("2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023")
+
+coefs_ev <- data.frame()
+for(season in years) {
+  year_model <- pub_xG_by_year(season)
+  year_model_coefs <- summary(year_model)$coefficients[,1:2]
+  coef_year_df <- year_model_coefs %>% 
+    as.list() %>% 
+    data.frame(.)
+  
+  colnames(coef_year_df) = c('X_Int', 'Shot_Distance', 'Shot_Angle', 
+                             'Rush', 'Rebound', 'Cross_Ice', 'Forecheck', 
+                             'X_Int_SD', 'Shot_Distance_SD', 'Shot_Angle_SD',
+                             'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Forecheck_SD')
+  
+  coefs_ev <- rbind(coefs_ev, coef_year_df)
+  print(season)
+  
+}
+
+coefs_ev$season <- years
+```
+
+
+```{r, echo=FALSE, message=FALSE, results='hide', warning=FALSE, include=FALSE}
+# PRIVATE even strength coefficients ####
+
+xG_by_year <- function(year) {
+
+  sample_shot_year <- sample_shot %>%
+    filter(season == year, meta_situation == "5-on-5") %>%
+    mutate(rush = ifelse(rush_situation != "zone" , 1, 0)) %>%
+    replace(is.na(.), FALSE)
+
+
+
+  init_logit <- glm(is_goal ~ shot_distance + abs(shot_angle) + rush + is_rebound + cross_ice + off_the_forecheck,
+                    data = sample_shot_year,
+                    family = "binomial")
+  init_logit
+}
+
+priv_coefs_ev <- data.frame()
+for(season in 2017:2023) {
+  year_model <- xG_by_year(season)
+  year_model_coefs <- summary(year_model)$coefficients[,1:2]
+  coef_year_df <- year_model_coefs %>%
+    as.list() %>%
+    data.frame(.)
+
+  colnames(coef_year_df) = c('X_Int', 'Shot_Distance', 'Shot_Angle',
+                             'Rush', 'Rebound', 'Cross_Ice', 'Forecheck',
+                             'X_Int_SD', 'Shot_Distance_SD', 'Shot_Angle_SD',
+                             'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Forecheck_SD')
+
+  priv_coefs_ev <- rbind(priv_coefs_ev, coef_year_df)
+  print(season)
+}
+priv_coefs_ev$season = 2017:2023
+
+merged_coefs <- coefs_ev %>% 
+  filter(season > 2016) %>% 
+  mutate(data = "PUBLIC") %>% 
+  rbind(priv_coefs_ev %>% mutate(data = "PRIVATE")) 
+```
+
+The figures below show how the frequency of our predictor variables differs between the two data sets. 
+
+#### Frequncy of Predictor Variables {.tabset}
+
+
+##### Distance
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+my_colors = carto_pal(7, "Bold")
+
+pub_dist_dist <- ev %>% 
+  filter(shot_distance < 70, 
+         event_type != "BLOCKED_SHOT",
+         season >=2016) %>%
+  mutate(shot_dist_round = 10*(shot_distance %/% 10)) %>% 
+  group_by(season, shot_dist_round) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(prop_shots = n/sum(n), n_shots = sum(n)) %>% 
+  ggplot(aes(x = as.factor(season), y = prop_shots, color = as.factor(shot_dist_round), group = as.factor(shot_dist_round))) + 
+  geom_point() + 
+  geom_line() + 
+  scale_color_manual(values = my_colors) +
+  labs(title = "PUBLIC Shot Distance Distribution by Year",
+       y = "Proportion of Total Shots",
+       x = "Season",
+       color = "Shot Distance")
+
+priv_dist_dist <- sample_shot %>% 
+  filter(meta_situation == "5-on-5",
+         shot_distance < 70) %>%
+  mutate(shot_dist_round = 10*(shot_distance %/% 10)) %>% 
+  group_by(shot_dist_round, season) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(prop_shots = n/sum(n)) %>% 
+  ggplot(aes(x = as.factor(season), y = prop_shots, color = as.factor(shot_dist_round))) + 
+  geom_point() + 
+  geom_line(aes(group = as.factor(shot_dist_round))) + 
+  labs(title = "PRIVATE Shot Distance Distribution by Year",
+       y = "Proportion of Total Shots",
+       x = "Season",
+       color = "Shot Distance") +
+  scale_color_manual(values = my_colors) +
+  ylim(ggplot_build(pub_dist_dist)$layout$panel_scales_y[[1]]$range$range)
+
+pub_dist_dist
+priv_dist_dist
+```
+
+##### Angle
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+my_colors = carto_pal(10, "Bold")
+
+pub_angle_dist <- ev %>% 
+  filter(shot_angle < 100, 
+         event_type != "BLOCKED_SHOT",
+         season >= 2016) %>%
+  mutate(shot_angle_round = 10*(shot_angle %/% 10)) %>% 
+  group_by(shot_angle_round, season) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(prop_shots = n/sum(n)) %>% 
+  ggplot(aes(x = as.factor(season), y = prop_shots, color = as.factor(shot_angle_round))) + 
+  geom_point() + 
+  geom_line(aes(group = as.factor(shot_angle_round))) + 
+  scale_color_manual(values = my_colors) +
+  labs(title = "PUBLIC Shot Angle Distribution by Year",
+       y = "Proportion of Total Shots",
+       x = "Season",
+       color = "Shot Angle")
+
+priv_angle_dist <- sample_shot %>% 
+  filter(meta_situation == "5-on-5",
+         abs(shot_angle) < 100) %>%
+  mutate(shot_angle_round = 10*(abs(shot_angle) %/% 10)) %>% 
+  group_by(shot_angle_round, season) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(prop_shots = n/sum(n)) %>% 
+  ggplot(aes(x = as.factor(season), y = prop_shots, color = as.factor(shot_angle_round))) + 
+  geom_point() + 
+  geom_line(aes(group = as.factor(shot_angle_round))) + 
+  scale_color_manual(values = my_colors) +
+  labs(title = "PRIVATE Shot Angle Distribution by Year",
+       y = "Proportion of Total Shots",
+       x = "Season",
+       color = "Shot Angle")+ 
+  ylim(ggplot_build(pub_angle_dist)$layout$panel_scales_y[[1]]$range$range)
+
+pub_angle_dist
+priv_angle_dist
+```
+
+##### Rebound
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+priv_reb_freq <- sample_shot %>%  
+  drop_na(is_rebound) %>% 
+  group_by(season, is_rebound, is_goal) %>% 
+  summarize(n=n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(is_rebound == TRUE) %>% 
+  ggplot(aes(x=season, y = per, fill = as.factor(is_goal))) + 
+  geom_col(color = 'black') +
+  labs(title = 'PRIVATE Even Strength Rebound Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots per Year',
+       fill = 'Shot Result') +
+  scale_fill_manual(values = my_colors,labels=c("Saved", "Goal"))
+
+pub_reb_freq <- ev %>% 
+  filter(!is.na(rebound), 
+         season >= 2017) %>% 
+  mutate(event_type = str_replace(event_type, "MISSED_SHOT", "SHOT")) %>% 
+  group_by(season, rebound, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(rebound == 1) %>% 
+  ggplot(aes(x=season, y=per, fill = factor(event_type, levels = c('SHOT', 'GOAL')))) + 
+  geom_col(color = 'black') +
+  labs(title = 'PUBLIC Even Strength Rebound Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots per Year',
+       fill = 'Shot Result')+ 
+  scale_fill_manual(values = my_colors) +
+  ylim(ggplot_build(priv_reb_freq)$layout$panel_scales_y[[1]]$range$range)
+
+priv_reb_freq
+pub_reb_freq
+```
+
+##### Rush
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+priv_rush_freq <- sample_shot %>%  
+  drop_na(rush_situation) %>% 
+  mutate(rush = ifelse(rush_situation == "zone", 0, 1)) %>% 
+  group_by(season, is_goal, rush) %>% 
+  summarize(n=n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(rush == 1, 
+         season != 2016) %>% 
+  ggplot(aes(x=season, y = per, fill = as.factor(is_goal))) + 
+  geom_col(color = 'black') +
+  labs(title = 'PRIVATE Even Strength Rush Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Fenwick per Year',
+       fill = 'Shot Result') + 
+  scale_fill_manual(values = my_colors, labels = c("Saved", "Goal"))
+
+priv_rush_freq
+
+ev %>% 
+  filter(!is.na(rush), 
+         season >= 2017) %>% 
+  mutate(event_type = str_replace(event_type, 'MISSED_SHOT', 'SHOT')) %>% 
+  group_by(season, rush, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(rush == 1) %>% 
+  ggplot(aes(x=as.factor(season), y=per, fill = factor(event_type, levels = c('MISSED_SHOT', 'SHOT', 'GOAL')),
+             group = factor(event_type, levels = c('MISSED_SHOT', 'SHOT', 'GOAL')))) + 
+  geom_col(color = 'black') +
+  labs(title = 'PUBLIC Even Strength Rush Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Fenwick per Year',
+       fill = 'Shot Result')+ 
+  scale_fill_manual(values = my_colors, labels = c("Saved", "Goal"))+ 
+  ylim(ggplot_build(priv_rush_freq)$layout$panel_scales_y[[1]]$range$range)
+
+```
+
+##### Cross Ice
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+priv_ci_freq <- sample_shot %>%  
+  drop_na(cross_ice) %>% 
+  group_by(season, cross_ice, is_goal) %>% 
+  summarize(n=n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(cross_ice == TRUE) %>% 
+  ggplot(aes(x=season, y = per, fill = as.factor(is_goal))) + 
+  geom_col(color = 'black') +
+  labs(title = 'PRIVATE Even Strength Cross Ice Event Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots per Year',
+       fill = 'Shot Result') + 
+  scale_fill_manual(values = my_colors, labels=c("NO GOAL", "GOAL"))
+
+priv_ci_freq
+
+ev %>% 
+  filter(!is.na(cross_ice_event), 
+         season >= 2016) %>% 
+  mutate(event_type = str_replace(event_type, 'MISSED_SHOT', 'SHOT')) %>% 
+  group_by(season, cross_ice_event, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(cross_ice_event == 1) %>% 
+  ggplot(aes(x=as.factor(season), y=per, fill = factor(event_type, levels = c('SHOT', 'GOAL')),
+             group = factor(event_type, levels = c('SHOT', 'GOAL')))) + 
+  geom_col(color = 'black') +
+  labs(title = 'PUBLIC Even Strength Cross Ice Event Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots per Year',
+       fill = 'Shot Result') +
+  scale_fill_manual(values = my_colors) +
+  ylim(ggplot_build(priv_ci_freq)$layout$panel_scales_y[[1]]$range$range)
+```
+
+##### Forecheck
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
+priv_fore_freq <- sample_shot %>%  
+  drop_na(off_the_forecheck) %>% 
+  group_by(season, off_the_forecheck, is_goal) %>% 
+  summarize(n=n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(off_the_forecheck == TRUE) %>% 
+  ggplot(aes(x=season, y = per, fill = as.factor(is_goal))) + 
+  geom_col(color = 'black') +
+  labs(title = 'PRIVATE Even Strength Forecheck Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots per Year',
+       fill = 'Shot Result') + 
+  scale_fill_manual(values = my_colors, labels=c("NO GOAL", "GOAL"))
+
+priv_fore_freq
+
+ev %>% 
+  filter(!is.na(forecheck), 
+         season >= 2016) %>% 
+  mutate(event_type = str_replace(event_type, 'MISSED_SHOT', 'SHOT')) %>% 
+  group_by(season, forecheck, event_type) %>% 
+  summarize(n = n()) %>% 
+  group_by(season) %>% 
+  mutate(per = prop.table(n) * 100) %>% 
+  filter(forecheck == 1) %>% 
+  ggplot(aes(x=as.factor(season), y=per, fill = factor(event_type, levels = c('SHOT', 'GOAL')),
+             group = factor(event_type, levels = c('SHOT', 'GOAL')))) + 
+  geom_col(color = 'black') +
+  labs(title = 'PUBLIC Even Strength Forecheck Frequency by Year', 
+       x = 'NHL Season', 
+       y = 'Percentage of All Shots per Year',
+       fill = 'Shot Result') + 
+  scale_fill_manual(values = my_colors) +
+  ylim(ggplot_build(priv_fore_freq)$layout$panel_scales_y[[1]]$range$range)
+```
+
+
+#### {-}
+
+As you can see, there are some notable vast differences. Specifically in the rush, cross ice, and forechecking variables, the privately tracked data has many more observations labeled. It's no surprise that our "definitions" for these variable were unable to see even close to the full picture. Regardless of the differences, we were curious to see if our model results could hold water. So, we trained the "same" logistic model this time using the privately tracked data (same variables used in the model despite the differences in labeling). Here's how the coefficients compare:
+
+#### Coefficients {.tabset}
+
+##### Distance
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+merged_coefs %>%
+  ggplot(aes(x=as.factor(season), y=Shot_Distance, color = data)) + 
+  geom_pointrange(aes(ymin=Shot_Distance-Shot_Distance_SD*1.96,
+                      ymax=Shot_Distance+Shot_Distance_SD*1.96), 
+                  position=position_dodge(width=0.25)) + 
+  theme_bw() +
+  scale_color_manual(values = my_colors) +
+  labs(title = 'Even Strength Shot Distance Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars',
+       x = 'NHL Season', 
+       y = 'Shot Distance Coefficient',
+       color = "Data")
+```
+
+
+#####  Angle
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#angle coef EV ####
+
+merged_coefs %>%
+  ggplot(aes(x=season, y=Shot_Angle, color = data)) + 
+  geom_pointrange(aes(ymin=Shot_Angle-Shot_Angle_SD*1.96, 
+                      ymax=Shot_Angle+Shot_Angle_SD*1.96), 
+                  position=position_dodge(width=0.25)) + 
+  theme_bw() + 
+  scale_color_manual(values = my_colors) +
+  labs(title = 'Even Strength Shot Angle Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Shot Angle Coefficient',
+       color = "Data")
+```
+
+##### Rebound
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#rebound coef EV ####
+
+merged_coefs %>%
+  ggplot(aes(x=season, y=Rebound, color = data)) + 
+  geom_pointrange(aes(ymin=Rebound-Rebound_SD*1.96, 
+                      ymax=Rebound+Rebound_SD*1.96), 
+                  position=position_dodge(width=0.25)) + 
+  theme_bw() +
+  scale_color_manual(values = my_colors) +
+  labs(title = 'EV Rebound Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Rebound Coefficient',
+       color = "Data")
+```
+
+##### Rush
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#rush coefs EV ####
+merged_coefs %>%
+  ggplot(aes(x=season, y=Rush, color = data)) + 
+  geom_pointrange(aes(ymin=Rush-Rush_SD*1.96, 
+                      ymax=Rush+Rush_SD*1.96), 
+                  position=position_dodge(width=0.25)) + 
+  theme_bw() +
+  scale_color_manual(values = my_colors) +
+  labs(title = 'Even Strength Rush Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Rush Coefficient',
+       color = "Data")
+
+```
+
+##### Cross Ice
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#cross ice coefs EV ####
+merged_coefs %>%
+  ggplot(aes(x=season, y=Cross_Ice, color = data)) + 
+  geom_pointrange(aes(ymin=Cross_Ice-Cross_Ice_SD*1.96, 
+                      ymax=Cross_Ice+Cross_Ice_SD*1.96), 
+                  position=position_dodge(width=0.25)) + 
+  theme_bw() + 
+  scale_color_manual(values = my_colors) +
+  labs(title = 'Even Strength Cross Ice Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Cross Ice Coefficient',
+       color = "Data")
+
+```
+
+##### Forecheck
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#forecheck coefs EV ####
+merged_coefs %>%
+  ggplot(aes(x=season, y=Forecheck, color = data)) + 
+  geom_pointrange(aes(ymin=Forecheck-Forecheck_SD*1.96, 
+                      ymax=Forecheck+Forecheck_SD*1.96), 
+                  position=position_dodge(width=0.25)) + 
+  theme_bw() + 
+  scale_color_manual(values = my_colors) +
+  labs(title = 'Even Strength Forecheck Coefficient by Year for NHL xG Model', 
+       subtitle = '95% Confidence Interval Error Bars', 
+       x = 'NHL Season', 
+       y = 'Takeaway Coefficient',
+       color = "Data")
+
+```
+
+
+#### {-}
+
+In general, it appears as if most of our variables follow the same pattern for both the private and public data. The largest difference is the rush coefficients, and given how differently they were labeled, this is not a shock. Overall, these results are promising that our analysis on the public data has some merit. If our theory is correct in that the NHL continues to become more accurate with their event tracking, it will be interesting to run this again on new years of data. 
+
+## Conclusion
+
+The decline in save percentage in the NHL brought up many hypotheses as to what could be causing it. Of course, it may be easy to assume goaltending may just be getting worse. However, we chose to give goalies the benefit of doubt and tried to uncover something else that may be driving this trend. We first examined if this decline is due to starting goalies playing less. While it is true that backups have gotten more and more starts as time goes on, the difference in quality between starters and backups isn't great enough for this to be the driving force. We next proposed the idea of more power plays, but immediately shot it down once the data showed that power play opportunities have actually been trending down. Our last hypothesis was that shot quality had improved over time. After building expected goal models on each season, we found some interesting trends in how goals were/are being scored. Save percentage has dropped for shots in the 20-40 foot range, as well as for shots with an angle of greater than 20 degrees.
+
+After restructuring the model to be trained on the years before the decline, we applied it to recent years of data and observe a leap in expected goals, which shows that shooters are taking higher quality shots. We are very curious to see if this trend continues and how far it goes in future years. Or will it bounce back? Time will tell.
+
+Although we found some interesting trends, it is clear that our data is quite imperfect. Thankfully, Sam Ventura of the Buffalo Sabres was able to provide us with a sample of privately tracked data so we could compare the results. While the variables aren't one to one, we believe our results were close enough to hold water.
+
+We are very excited to continue working with Sam on this project, so expect more from us soon.
+
+## Acknowledgements
+
+We'd like to give a huge thank you to Sam Ventura for his guidance throughout the research process. We'd also like to thank our program instructors Meg Ellingwood and Shamindra Shrotriya as well as our TA Quang Nguyen.
+
