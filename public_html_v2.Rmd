@@ -28,7 +28,7 @@ goalies_indv <- goalies %>%
   group_by(Player, season, Rk) %>% 
   filter(row_number()==1)
 
-sample_shot <- read_csv("shot-sample.csv") %>% mutate(season = substr(season, 5, 8))
+sample_shot <- read_csv("shot-sample-updated.csv") %>% mutate(season = substr(season, 5, 8))
 
 # # If you do not have the csv:
 # pbp <- load_pbp(season = 2012:2023) %>%
