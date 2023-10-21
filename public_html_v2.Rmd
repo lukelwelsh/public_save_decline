@@ -1878,11 +1878,12 @@ pub_xG_by_year <- function(year) {
       angle_change = acos((first_dist**2+reb_dist**2-betw_shot_dist**2)/(2*first_dist*reb_dist)) * (180 / pi)
     ) 
   
-  logit <- pbp_shots %>% select(event_type, shot_distance, shot_angle, rush, rebound, cross_ice_event, forecheck, goal)
+  logit <- pbp_shots %>% select(event_type, shot_distance, shot_angle, rush,
+                                rebound, cross_ice_event, forecheck, angle_change, goal)
   # logit$xg <- pbp_shots$xg
   logit2 <- logit %>% na.omit()
   
-  init_logit <- glm(goal ~ shot_distance + shot_angle + rush + rebound + cross_ice_event + forecheck,
+  init_logit <- glm(goal ~ shot_distance + shot_angle + rush + rebound + cross_ice_event + forecheck + rebound:angle_change,
                     data = logit2,
                     family = "binomial")
 }
@@ -1898,9 +1899,9 @@ for(season in years) {
     data.frame(.)
   
   colnames(coef_year_df) = c('X_Int', 'Shot_Distance', 'Shot_Angle', 
-                             'Rush', 'Rebound', 'Cross_Ice', 'Forecheck', 
+                             'Rush', 'Rebound', 'Cross_Ice', 'Forecheck', "Rebound_Angle_Change",
                              'X_Int_SD', 'Shot_Distance_SD', 'Shot_Angle_SD',
-                             'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Forecheck_SD')
+                             'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Forecheck_SD', "Rebound_Angle_Change_SD")
   
   coefs_ev <- rbind(coefs_ev, coef_year_df)
   print(season)
@@ -1923,7 +1924,8 @@ xG_by_year <- function(year) {
 
 
 
-  init_logit <- glm(is_goal ~ shot_distance + abs(shot_angle) + rush + is_rebound + cross_ice + off_the_forecheck,
+  init_logit <- glm(is_goal ~ shot_distance + abs(shot_angle) + rush + is_rebound +
+                      cross_ice + off_the_forecheck + is_rebound:reb_angle_change,
                     data = sample_shot_year,
                     family = "binomial")
   init_logit
@@ -1938,9 +1940,9 @@ for(season in 2017:2023) {
     data.frame(.)
 
   colnames(coef_year_df) = c('X_Int', 'Shot_Distance', 'Shot_Angle',
-                             'Rush', 'Rebound', 'Cross_Ice', 'Forecheck',
+                             'Rush', 'Rebound', 'Cross_Ice', 'Forecheck', "Rebound_Angle_Change",
                              'X_Int_SD', 'Shot_Distance_SD', 'Shot_Angle_SD',
-                             'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Forecheck_SD')
+                             'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Forecheck_SD', "Rebound_Angle_Change_SD")
 
   priv_coefs_ev <- rbind(priv_coefs_ev, coef_year_df)
   print(season)
