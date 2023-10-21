@@ -504,9 +504,9 @@ for(season in years) {
     data.frame(.)
   
   colnames(coef_year_df) = c('X_Int', 'Shot_Distance', 'Shot_Angle', 
-                             'Rush', 'Rebound', 'Cross_Ice', 'Forecheck', 
+                             'Rush', 'Rebound', 'Cross_Ice', 'Forecheck', 'Rebound_Angle_Change',
                              'X_Int_SD', 'Shot_Distance_SD', 'Shot_Angle_SD',
-                             'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Forecheck_SD')
+                             'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Forecheck_SD', 'Rebound_Angle_Change_SD')
   
   coefs_ev <- rbind(coefs_ev, coef_year_df)
   print(season)
@@ -1567,23 +1567,23 @@ Forecheck coefficients (even strength only) are positive for all seasons but sho
 
 ```{r, echo =FALSE, message=FALSE, warning=FALSE, fig.show="hold", out.width="50%"}
 coefs_ev %>%
-  ggplot(aes(x=season, y=Rebound_Angle_Change)) + 
-  geom_pointrange(aes(ymin=Rebound_Angle_Change-Rebound_Angle_Change_SD*1.96, 
-                      ymax=Rebound_Angle_Change+Rebound_Angle_Change_SD*1.96)) + 
-  theme_bw() + 
-  labs(title = 'EV Rebound Angle Change Coefficient by Year for NHL xG Model', 
-       subtitle = '95% Confidence Interval Error Bars', 
-       x = 'NHL Season', 
+  ggplot(aes(x=season, y=Rebound_Angle_Change)) +
+  geom_pointrange(aes(ymin=Rebound_Angle_Change-Rebound_Angle_Change_SD*1.96,
+                      ymax=Rebound_Angle_Change+Rebound_Angle_Change_SD*1.96)) +
+  theme_bw() +
+  labs(title = 'EV Rebound Angle Change Coefficient by Year for NHL xG Model',
+       subtitle = '95% Confidence Interval Error Bars',
+       x = 'NHL Season',
        y = 'Rebound Angle Change Coefficient')
 
 coefs_pp %>%
-  ggplot(aes(x=season, y=Rebound_Angle_Change)) + 
-  geom_pointrange(aes(ymin=Rebound_Angle_Change-Rebound_Angle_Change_SD*1.96, 
-                      ymax=Rebound_Angle_Change+Rebound_Angle_Change_SD*1.96)) + 
-  theme_bw() + 
-  labs(title = 'PP Rebound Angle Change Coefficient by Year for NHL xG Model', 
-       subtitle = '95% Confidence Interval Error Bars', 
-       x = 'NHL Season', 
+  ggplot(aes(x=season, y=Rebound_Angle_Change)) +
+  geom_pointrange(aes(ymin=Rebound_Angle_Change-Rebound_Angle_Change_SD*1.96,
+                      ymax=Rebound_Angle_Change+Rebound_Angle_Change_SD*1.96)) +
+  theme_bw() +
+  labs(title = 'PP Rebound Angle Change Coefficient by Year for NHL xG Model',
+       subtitle = '95% Confidence Interval Error Bars',
+       x = 'NHL Season',
        y = 'Rebound Angle Change Coefficient')
 ```
 
