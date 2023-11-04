@@ -1,5 +1,5 @@
 ---
-title: "Examining the Decline of Save Percentage in the NHL"
+title: "Examining the Decline of Save Percentage in the NHL (2024)"
 author: "Quinn Robnett and Luke Welsh"
 date: "2023-07-27"
 output:
@@ -56,7 +56,7 @@ library(rcartocolor)
 
 
 ```{r, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
-goalies <- read_csv("data\\goalies_all_seasons_count.csv") %>% 
+goalies <- read_csv("data\\goalies_all_seasons_count_24.csv") %>% 
   rename(season = Season, team = Tm)
 
 goalies_team <- goalies %>% 
@@ -151,7 +151,7 @@ Our second data set is event-level play-by-play data courtesy of the hockeyR pac
 
 #### Snippet of hockeyR Play by Play Data
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
-pbp %>%
+pbp24 %>%
   select(event_type, event_team, event_team_type, period, period_time, game_seconds_remaining, shot_distance, shot_angle, x_fixed, y_fixed) %>%
   head() %>%
   knitr::kable() %>%
@@ -181,14 +181,14 @@ starters <- goalies_indv %>%
   slice(1:30) %>% 
   mutate(rank = "Starter")
 
-games_per_season <- pbp %>% 
+games_per_season <- pbp24 %>% 
   group_by(season, game_id) %>% 
   summarise(count = n()) %>% 
   ungroup() %>% 
   group_by(season) %>% 
   summarise(games = n())
 
-teams_per_season <- pbp %>% 
+teams_per_season <- pbp24 %>% 
   group_by(season, home_name) %>% 
   summarise(count = n()) %>% 
   ungroup() %>% 
@@ -359,7 +359,7 @@ avgs %>%
 ##### Shots
 
 ```{r, message=FALSE, echo =FALSE}
-pbp %>% 
+pbp24 %>% 
   filter(event_type %in% c('SHOT', 'GOAL', 'MISSED_SHOT'),
          strength_code %in% c('PP')) %>% 
   group_by(season, game_id) %>% 
@@ -381,7 +381,7 @@ pbp %>%
 We also observe a decline in save percentage for both even strength and power play situations. Interestingly, the decline in save percentage for even strength seems to start much later than that of power plays. Power play save percentage seems to start declining after 2014, whereas save percentage for even strength remains mostly constant through 2017 before taking a drop.
 
 ```{r, echo=FALSE, message=FALSE}
-pbp %>% 
+pbp24 %>% 
   filter(event_type %in% c('SHOT', 'GOAL'),
          strength_code %in% c('PP', 'EV')) %>%
   mutate(event_type = ifelse(event_type == 'GOAL', 1, 0)) %>% 
@@ -446,7 +446,7 @@ xG_by_year <- function(year) {
 
   fenwick <- c("SHOT","MISSED_SHOT","GOAL")
   
-  pbp_year <- pbp %>% filter(season == year)
+  pbp_year <- pbp24 %>% filter(season == year)
   
   pbp_shots <- pbp_year %>% 
     select(-xg) %>% 
@@ -524,7 +524,7 @@ xG_by_year <- function(year) {
 ```{r, echo=FALSE, message=FALSE, results='hide', warning=FALSE, include=FALSE}
 #even strength coefficients ####
 
-years <- c("2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023")
+years <- c("2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024")
 
 coefs_ev <- data.frame()
 for(season in years) {
@@ -559,7 +559,7 @@ xG_by_year_pp <- function(year) {
 
   fenwick <- c("SHOT","MISSED_SHOT","GOAL")
   
-  pbp_year <- pbp %>% filter(season == year)
+  pbp_year <- pbp24 %>% filter(season == year)
   
   pbp_shots <- pbp_year %>% 
     select(-xg) %>% 
@@ -635,7 +635,7 @@ xG_by_year_pp <- function(year) {
 ```{r, echo=FALSE, message = FALSE, results='hide', include=FALSE, warning=FALSE}
 #Power play coefficients ####
 
-years <- c("2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023")
+years <- c("2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024")
 
 coefs_pp <- data.frame()
 for(season in years) {
@@ -669,7 +669,7 @@ real_strengths <- c(
 
   fenwick <- c("SHOT","MISSED_SHOT","GOAL")
   
-ev <- pbp %>%
+ev <- pbp24 %>%
   select(-xg) %>% 
     filter(period_type != "SHOOTOUT") %>% 
     filter(secondary_type != "Penalty Shot" | is.na(secondary_type)) %>% 
@@ -731,7 +731,7 @@ ev <- pbp %>%
       angle_change = acos((first_dist**2+reb_dist**2-betw_shot_dist**2)/(2*first_dist*reb_dist)) * (180 / pi)
     )
 
-pp <- pbp %>% 
+pp <- pbp24 %>% 
   select(-xg) %>% 
     filter(period_type != "SHOOTOUT") %>% 
     filter(secondary_type != "Penalty Shot" | is.na(secondary_type)) %>% 
@@ -871,7 +871,6 @@ pp_dist$`Shot Distance` <- factor(pp_dist$`Shot Distance`, levels=seq(0, 60, 10)
 
 my_colors = carto_pal(7, "Bold")
 
-
 pp_dist_gg <- pp_dist %>% 
   ggplot(aes(x = as.numeric(season), y = value, color = `Shot Distance`)) + 
   geom_point() + 
@@ -880,7 +879,6 @@ pp_dist_gg <- pp_dist %>%
   labs(y = "Proportion of Total Shots", title = "Shot Distance Distribution by Year on Power Plays")  + 
   scale_color_manual(values = my_colors) +
   theme_bw()
-
 
 ev_dist_gg <- ev_dist %>% 
   ggplot(aes(x = as.numeric(season), y = value, color = `Shot Distance`)) + 
@@ -963,7 +961,7 @@ Even more interesting is the save percentage on shots from certain ranges. For m
 
 my_colors = carto_pal(4, "Bold")
 
-pbp %>%
+pbp24 %>%
   filter(event_type %in% c('SHOT', 'GOAL'),
          strength_code == "EV") %>% 
   mutate(distance_round = plyr::round_any(shot_distance, 20, f = floor),
@@ -985,7 +983,7 @@ pbp %>%
   scale_color_manual(values = my_colors) +
   theme_bw()
 
-pbp %>%
+pbp24 %>%
   filter(event_type %in% c('SHOT', 'GOAL'),
          strength_code == "PP") %>% 
   mutate(distance_round = plyr::round_any(shot_distance, 20, f = floor),
