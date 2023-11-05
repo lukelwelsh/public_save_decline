@@ -342,7 +342,7 @@ A power play consists of one team having more players on the ice than the other 
 
 ```{r, echo=FALSE, message=FALSE}
 
-avgs <- read_csv("league_avgs.csv")
+avgs <- read_csv("data\\league_avgs.csv")
 
 avgs %>% 
   ggplot(aes(Season, PPO)) +
@@ -888,7 +888,7 @@ ev_dist_gg <- ev_dist %>%
   geom_line() + 
   scale_x_continuous("Season", labels = as.numeric(ev_dist$season), breaks = as.numeric(ev_dist$season)) +
   labs(y = "Proportion of Total Shots", title = "Shot Distance Distribution by Year with Even Strength") +
-  ylim(ggplot_build(ev_dist_gg)$layout$panel_scales_y[[1]]$range$range) +
+  ylim(ggplot_build(pp_dist_gg)$layout$panel_scales_y[[1]]$range$range) +
   scale_color_manual(values = my_colors) +
   theme_bw()
 

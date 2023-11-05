@@ -56,25 +56,25 @@ library(rcartocolor)
 
 
 ```{r, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
-goalies <- read_csv("data\\goalies_all_seasons_count_24.csv") %>% 
+goalies24 <- read_csv("data\\goalies_all_seasons_count_24.csv") %>% 
   rename(season = Season, team = Tm)
 
-goalies_team <- goalies %>% 
+goalies_team24 <- goalies24 %>% 
   filter(team != "TOT")
 
-goalies_indv <- goalies %>%
+goalies_indv24 <- goalies24 %>%
   group_by(Player, season, Rk) %>% 
   filter(row_number()==1)
 
 sample_shot <- read_csv("data\\shot-sample-updated.csv") %>% mutate(season = substr(season, 5, 8))
 
-pbp <- read_csv("data\\pbp.csv") %>% 
-  mutate(event_goalie_name = str_replace_all(event_goalie_name, "\\.", " "),
-         home_goalie = str_replace_all(home_goalie, "\\.", " "),
-         away_goalie = str_replace_all(away_goalie, "\\.", " "),
-         event_goalie_team = case_when(event_team == home_name ~ away_name,
-                                       event_team == away_name ~ home_name)) %>% 
-  select(-1)
+# pbp <- read_csv("data\\pbp.csv") %>% 
+#   mutate(event_goalie_name = str_replace_all(event_goalie_name, "\\.", " "),
+#          home_goalie = str_replace_all(home_goalie, "\\.", " "),
+#          away_goalie = str_replace_all(away_goalie, "\\.", " "),
+#          event_goalie_team = case_when(event_team == home_name ~ away_name,
+#                                        event_team == away_name ~ home_name)) %>% 
+#   select(-1)
 
 pbp24 <- read_csv("data\\pbp24.csv") %>% 
   mutate(event_goalie_name = str_replace_all(event_goalie_name, "\\.", " "),
@@ -97,16 +97,16 @@ Individual goaltending is hard, if not impossible, to predict on a year-to-year 
 ##### Plot
 
 ```{r, echo=FALSE}
-svpct_by_year <- goalies_indv %>% 
+svpct_by_year24 <- goalies_indv24 %>% 
   group_by(season) %>%
   summarise(SV = sum(SV), SOG = sum(SA), goals = sum(GA)) %>% 
   mutate(SVpct = SV/SOG)
 
-svpct_by_year %>% 
+svpct_by_year24 %>% 
   ggplot(aes(season, SVpct)) +
   geom_point(size = 3) +
   geom_line() +
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   ggtitle("League Save Percentage by Year") +
   ylab("Save Percentage") +
   theme_bw()
@@ -115,14 +115,14 @@ svpct_by_year %>%
 ##### Table
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
-svpct_by_year %>%
+svpct_by_year24 %>%
   mutate(SVpct = round(SVpct, 4)) %>%
   rename(`SV%` = SVpct, Season = season, G = goals) %>% 
   kable(booktabs = TRUE) %>% 
   kable_styling("striped") %>% 
   column_spec(5, color = "white",
-              background = spec_color(svpct_by_year$SVpct, end = 0.7),
-              popover = paste("am:", svpct_by_year$SVpct)) 
+              background = spec_color(svpct_by_year24$SVpct, end = 0.7),
+              popover = paste("am:", svpct_by_year24$SVpct)) 
 ```
 
 #### {-}
@@ -136,7 +136,7 @@ We used two data sets for our analysis. The first was pulled from Hockey Referen
 ##### Snippet of Hockey Reference Goalie Data
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
-goalies %>%
+goalies24 %>%
   select(Player, Age, team, season, GP, GS, W, L, `T/O`, GA, SA, SV, `SV%`, GAA) %>%
   rename(Team = team, OT = `T/O`, Season = season) %>% 
   arrange(-Season, -GP) %>%
@@ -175,45 +175,45 @@ Our first idea at what could be explaining the decline is simple: worse goalies 
 
 ```{r, echo = FALSE, message=FALSE, warning=FALSE}
 #starters ####
-starters <- goalies_indv %>% 
+starters24 <- goalies_indv24 %>% 
   group_by(season) %>% 
   arrange(-GS, -`SV%`) %>% 
   slice(1:30) %>% 
   mutate(rank = "Starter")
 
-games_per_season <- pbp24 %>% 
+games_per_season24 <- pbp24 %>% 
   group_by(season, game_id) %>% 
   summarise(count = n()) %>% 
   ungroup() %>% 
   group_by(season) %>% 
   summarise(games = n())
 
-teams_per_season <- pbp24 %>% 
+teams_per_season24 <- pbp24 %>% 
   group_by(season, home_name) %>% 
   summarise(count = n()) %>% 
   ungroup() %>% 
   group_by(season) %>% 
   summarise(teams = n())
 
-starters <- games_per_season %>%
-  left_join(teams_per_season, by = "season") %>% 
+starters24 <- games_per_season24 %>%
+  left_join(teams_per_season24, by = "season") %>% 
   mutate(games_per = (games*2)/teams,
          season = as.numeric(season)) %>% 
-  right_join(starters, by = "season")
+  right_join(starters24, by = "season")
 
-starters$games_per[which(starters$season == 2023)] <-  82
+starters24$games_per[which(starters24$season == 2023)] <-  82
 
-pctstarts <- starters %>% 
+pctstarts24 <- starters24 %>% 
   group_by(season, games) %>% 
   summarise(GS = sum(GS)) %>% 
   mutate(pct_started = GS/(games*2))
 
-pctstarts %>% 
+pctstarts24 %>% 
   ggplot(aes(season, pct_started)) +
   geom_point(size = 3) +
   geom_line() +
   ggtitle("Starter League-Wide Average Pct of Starts by Season") +
-  scale_x_continuous("Season", labels = pctstarts$season, breaks = pctstarts$season) +
+  scale_x_continuous("Season", labels = pctstarts24$season, breaks = pctstarts24$season) +
   ylab("Percentage of Starts") +
   theme_bw()
 
@@ -222,14 +222,14 @@ pctstarts %>%
 ##### Table 
 
 ```{r, echo =FALSE, message=FALSE, warning=FALSE}
-pctstarts %>%
+pctstarts24 %>%
   select(season, GS, pct_started) %>%
   rename(`Avg Starts` = GS, Season = season, `Pct Started` = pct_started) %>% 
   kable(booktabs = TRUE) %>% 
   kable_styling("striped") %>% 
   column_spec(3, color = "white",
-              background = spec_color(pctstarts$pct_started, end = 0.7),
-              popover = paste("am:", pctstarts$pct_started))
+              background = spec_color(pctstarts24$pct_started, end = 0.7),
+              popover = paste("am:", pctstarts24$pct_started))
 ```
 
 
@@ -242,34 +242,34 @@ We observe that this is indeed the case. In the figure above, a starter was cons
 
 
 ```{r, echo = FALSE, message=FALSE, warning = FALSE}
-backups <- goalies_indv %>% 
+backups24 <- goalies_indv24 %>% 
   group_by(season) %>% 
   arrange(-GS, -`SV%`) %>% 
   slice(31:1000) %>% 
   mutate(rank = "Backup")
 
-backups <- games_per_season %>%
-  left_join(teams_per_season, by = "season") %>% 
+backups24 <- games_per_season24 %>%
+  left_join(teams_per_season24, by = "season") %>% 
   mutate(games_per = (games*2)/teams,
          season = as.numeric(season)) %>% 
-  right_join(backups, by = "season")
+  right_join(backups24, by = "season")
 
-backups$games_per[which(backups$season == 2023)] <-  82
+backups24$games_per[which(backups24$season == 2023)] <-  82
 
-startback <- starters %>% 
-  rbind(., backups) %>%
+startback24 <- starters24 %>% 
+  rbind(., backups24) %>%
   group_by(season, rank) %>% 
   summarise(SV = sum(SV), SOG = sum(SA), goals = sum(GA)) %>% 
   mutate(SVpct = SV/SOG)
 
 my_colors = carto_pal(2, "Bold")
 
-startback %>% 
+startback24 %>% 
   ggplot(aes(as.numeric(season), SVpct, color = rank)) +
   geom_point(size = 3) + 
   geom_line() +
   ggtitle("Save Percentage for Starters/Backups by Year") +
-  scale_x_continuous("Season", labels = startback$season, breaks = startback$season) +
+  scale_x_continuous("Season", labels = startback24$season, breaks = startback24$season) +
   ylab("Save Percentage") +
   labs(color = "Rank") +
   scale_color_manual(values = my_colors) +
@@ -280,7 +280,7 @@ startback %>%
 Unsurprisingly, it is clear that starters' save percentages are better than the backups' (any non-starter). But, even so, for both backups and starters, a decline in save percentage is still present. Even if we narrow it down to the top 15 starters by year based on save percentage, we still observe a decline:
 
 ```{r, echo =FALSE, message=FALSE, warning=FALSE}
-starters %>%
+starters24 %>%
   group_by(season) %>% 
   top_n(n=15, wt = `SV%`) %>% 
   ungroup() %>% 
@@ -291,42 +291,42 @@ starters %>%
   geom_point( size = 3) +
   geom_line() +
   ggtitle("Top 15 Goalies Save Percentage by Year") + 
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   ylab("Save Percentage")+
   theme_bw()
 ```
 
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
-starters12_16 <- startback %>% 
-  filter(rank == "Starter")
-
-backups12_16 <- startback %>% 
-  filter(rank == "Backup")
-
-pctstarts <- pctstarts %>% 
-  mutate(starter_pct = mean(starters12_16$SVpct),
-         backup_pct = mean(backups12_16$SVpct),
-         x_svpct = (pct_started*starter_pct) + ((1-pct_started)*backup_pct))
-
-
-startback2 <- startback %>% 
-  pivot_wider(values_from = SVpct, names_from = rank, id_cols = season) %>% 
-  mutate(diff = Starter - Backup)
-
-
-mean(startback2$diff)
-mean(startback2$diff) + 1.96*sd(startback2$diff)
-mean(startback2$diff) - 1.96*sd(startback2$diff)
-
-
-diff_svpct <- c(mean(startback2$diff), mean(startback2$diff) + 1.96*sd(startback2$diff), mean(startback2$diff) - 1.96*sd(startback2$diff))
-
-diff_start_pct <- max(pctstarts$pct_started) - min(pctstarts$pct_started)
-
-svpct_decline <- max(svpct_by_year$SVpct) - min(svpct_by_year$SVpct)
-
-(diff_svpct*diff_start_pct)/svpct_decline
+# starters12_16 <- startback %>% 
+#   filter(rank == "Starter")
+# 
+# backups12_16 <- startback %>% 
+#   filter(rank == "Backup")
+# 
+# pctstarts <- pctstarts %>% 
+#   mutate(starter_pct = mean(starters12_16$SVpct),
+#          backup_pct = mean(backups12_16$SVpct),
+#          x_svpct = (pct_started*starter_pct) + ((1-pct_started)*backup_pct))
+# 
+# 
+# startback2 <- startback %>% 
+#   pivot_wider(values_from = SVpct, names_from = rank, id_cols = season) %>% 
+#   mutate(diff = Starter - Backup)
+# 
+# 
+# mean(startback2$diff)
+# mean(startback2$diff) + 1.96*sd(startback2$diff)
+# mean(startback2$diff) - 1.96*sd(startback2$diff)
+# 
+# 
+# diff_svpct <- c(mean(startback2$diff), mean(startback2$diff) + 1.96*sd(startback2$diff), mean(startback2$diff) - 1.96*sd(startback2$diff))
+# 
+# diff_start_pct <- max(pctstarts$pct_started) - min(pctstarts$pct_started)
+# 
+# svpct_decline <- max(svpct_by_year$SVpct) - min(svpct_by_year$SVpct)
+# 
+# (diff_svpct*diff_start_pct)/svpct_decline
   
 ```
 
@@ -342,7 +342,7 @@ A power play consists of one team having more players on the ice than the other 
 
 ```{r, echo=FALSE, message=FALSE}
 
-avgs <- read_csv("league_avgs.csv")
+avgs <- read_csv("data\\league_avgs.csv")
 
 avgs %>% 
   ggplot(aes(Season, PPO)) +
@@ -371,7 +371,7 @@ pbp24 %>%
   geom_point(size = 3) +
   geom_line() +
   ggtitle("Power Play Shots Per Game by Season") +
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   ylab("Power Play Shots per Game (both teams)") +
   theme_bw()
 ```
@@ -390,7 +390,7 @@ pbp24 %>%
   ggplot(aes(x = as.numeric(season), y = save_perc, color = strength_code)) + 
   geom_point(size = 3) +
   geom_line() +
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   labs(title = 'NHL Save Percentage on Shots on Goal, by Year', y = 'Save Percentage', color = 'Strength State') + 
   scale_color_manual(values = my_colors) +
   scale_fill_discrete(labels = c("Even Strength", "Power Play")) +
@@ -437,7 +437,7 @@ After building the framework for the models, we trained a model for every indivi
 
 ```{r, echo=FALSE}
 # Even Strength Model ####
-xG_by_year <- function(year) {
+xG_by_year24 <- function(year) {
  
   real_strengths <- c(
     "5v5","5v4","5v3","6v5","6v4","6v3","4v3","3v3",
@@ -524,11 +524,11 @@ xG_by_year <- function(year) {
 ```{r, echo=FALSE, message=FALSE, results='hide', warning=FALSE, include=FALSE}
 #even strength coefficients ####
 
-years <- c("2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024")
+years24 <- c("2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024")
 
-coefs_ev <- data.frame()
-for(season in years) {
-  year_model <- xG_by_year(season)
+coefs_ev24 <- data.frame()
+for(season in years24) {
+  year_model <- xG_by_year24(season)
   year_model_coefs <- summary(year_model)$coefficients[,1:2]
   coef_year_df <- year_model_coefs %>% 
     as.list() %>% 
@@ -539,18 +539,18 @@ for(season in years) {
                              'X_Int_SD', 'Shot_Distance_SD', 'Shot_Angle_SD',
                              'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Forecheck_SD', 'Rebound_Angle_Change_SD')
   
-  coefs_ev <- rbind(coefs_ev, coef_year_df)
+  coefs_ev24 <- rbind(coefs_ev24, coef_year_df)
   print(season)
   
 }
 
-coefs_ev$season <- years
+coefs_ev24$season <- years24
 ```
 
 
 ```{r, echo=FALSE}
 #Power Play Model ####
-xG_by_year_pp <- function(year) {
+xG_by_year_pp24 <- function(year) {
   
   real_strengths <- c(
     "5v5","5v4","5v3","6v5","6v4","6v3","4v3","3v3",
@@ -635,11 +635,9 @@ xG_by_year_pp <- function(year) {
 ```{r, echo=FALSE, message = FALSE, results='hide', include=FALSE, warning=FALSE}
 #Power play coefficients ####
 
-years <- c("2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024")
-
-coefs_pp <- data.frame()
-for(season in years) {
-  year_model <- xG_by_year_pp(season)
+coefs_pp24 <- data.frame()
+for(season in years24) {
+  year_model <- xG_by_year_pp24(season)
   year_model_coefs <- summary(year_model)$coefficients[,1:2]
   coef_year_df <- year_model_coefs %>% 
     as.list() %>% 
@@ -650,13 +648,13 @@ for(season in years) {
                              'X_Int_SD', 'Shot_Distance_SD', 'Shot_Angle_SD',
                              'Rush_SD', 'Rebound_SD', 'Cross_Ice_SD', 'Rebound_Angle_Change_SD')
   
-  coefs_pp <- rbind(coefs_pp, coef_year_df)
+  coefs_pp24 <- rbind(coefs_pp24, coef_year_df)
   
   print(season)
   
 }
 
-coefs_pp$season <- years
+coefs_pp24$season <- years24
 ```
 
 
@@ -667,9 +665,9 @@ real_strengths <- c(
     "4v4","4v5","3v5","5v6","4v6","3v6","3v4"
   )
 
-  fenwick <- c("SHOT","MISSED_SHOT","GOAL")
+fenwick <- c("SHOT","MISSED_SHOT","GOAL")
   
-ev <- pbp24 %>%
+ev24 <- pbp24 %>%
   select(-xg) %>% 
     filter(period_type != "SHOOTOUT") %>% 
     filter(secondary_type != "Penalty Shot" | is.na(secondary_type)) %>% 
@@ -731,7 +729,7 @@ ev <- pbp24 %>%
       angle_change = acos((first_dist**2+reb_dist**2-betw_shot_dist**2)/(2*first_dist*reb_dist)) * (180 / pi)
     )
 
-pp <- pbp24 %>% 
+pp24 <- pbp24 %>% 
   select(-xg) %>% 
     filter(period_type != "SHOOTOUT") %>% 
     filter(secondary_type != "Penalty Shot" | is.na(secondary_type)) %>% 
@@ -802,7 +800,7 @@ pp <- pbp24 %>%
 #Distance coefficient plots
 
 #distance coeffiecient EV ####
-coefs_ev %>%
+coefs_ev24 %>%
   ggplot(aes(x=season, y=Shot_Distance)) + 
   geom_pointrange(aes(ymin=Shot_Distance-Shot_Distance_SD*1.96,
                       ymax=Shot_Distance+Shot_Distance_SD*1.96)) + 
@@ -815,7 +813,7 @@ coefs_ev %>%
 
 
 #distance coefficient PP ####
-coefs_pp %>%
+coefs_pp24 %>%
   ggplot(aes(x=season, y=Shot_Distance)) + 
   geom_pointrange(aes(ymin=Shot_Distance-Shot_Distance_SD*1.96,
                       ymax=Shot_Distance+Shot_Distance_SD*1.96)) + 
@@ -832,7 +830,7 @@ coefs_pp %>%
 
 ```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
 #distance distribution EV ####
-ev_dist <- ev %>% 
+ev_dist24 <- ev24 %>% 
   filter(event_type %in% c('GOAL', 'SHOT', 'MISSED_SHOT'), 
          !is.na(shot_distance), 
          shot_distance < 70) %>% 
@@ -847,12 +845,12 @@ ev_dist <- ev %>%
   pivot_longer(cols = `0`:`60`, names_to = "Shot Distance")
 
 
-ev_dist$`Shot Distance` <- factor(ev_dist$`Shot Distance`, levels=seq(0, 60, 10))
+ev_dist24$`Shot Distance` <- factor(ev_dist24$`Shot Distance`, levels=seq(0, 60, 10))
 
 
 
 #distance distribution PP ####
-pp_dist <- pp %>% 
+pp_dist24 <- pp24 %>% 
   filter(event_type %in% c('GOAL', 'SHOT', 'MISSED_SHOT'), 
          !is.na(shot_distance), 
          shot_distance < 70) %>% 
@@ -867,32 +865,32 @@ pp_dist <- pp %>%
   pivot_longer(cols = `0`:`60`, names_to = "Shot Distance")
 
 
-pp_dist$`Shot Distance` <- factor(pp_dist$`Shot Distance`, levels=seq(0, 60, 10))
+pp_dist24$`Shot Distance` <- factor(pp_dist24$`Shot Distance`, levels=seq(0, 60, 10))
 
 my_colors = carto_pal(7, "Bold")
 
-pp_dist_gg <- pp_dist %>% 
+pp_dist_gg24 <- pp_dist24 %>% 
   ggplot(aes(x = as.numeric(season), y = value, color = `Shot Distance`)) + 
   geom_point() + 
   geom_line() + 
-  scale_x_continuous("Season", labels = as.numeric(pp_dist$season), breaks = as.numeric(pp_dist$season)) +
+  scale_x_continuous("Season", labels = as.numeric(pp_dist24$season), breaks = as.numeric(pp_dist24$season)) +
   labs(y = "Proportion of Total Shots", title = "Shot Distance Distribution by Year on Power Plays")  + 
   scale_color_manual(values = my_colors) +
   theme_bw()
 
-ev_dist_gg <- ev_dist %>% 
+ev_dist_gg24 <- ev_dist24 %>% 
   ggplot(aes(x = as.numeric(season), y = value, color = `Shot Distance`)) + 
   geom_point() + 
   geom_line() + 
-  scale_x_continuous("Season", labels = as.numeric(ev_dist$season), breaks = as.numeric(ev_dist$season)) +
+  scale_x_continuous("Season", labels = as.numeric(ev_dist24$season), breaks = as.numeric(ev_dist24$season)) +
   labs(y = "Proportion of Total Shots", title = "Shot Distance Distribution by Year with Even Strength") +
-  ylim(ggplot_build(ev_dist_gg)$layout$panel_scales_y[[1]]$range$range) +
+  ylim(ggplot_build(pp_dist_gg24)$layout$panel_scales_y[[1]]$range$range) +
   scale_color_manual(values = my_colors) +
   theme_bw()
 
 
-ev_dist_gg
-pp_dist_gg
+ev_dist_gg24
+pp_dist_gg24
 ```
 
 
@@ -902,7 +900,7 @@ pp_dist_gg
 #save perc distance ####
 my_colors = carto_pal(7, "Bold")
 
-ev %>%
+ev24 %>%
   filter(event_type %in% c('SHOT', 'GOAL')) %>% 
   mutate(distance_round = plyr::round_any(shot_distance, 10, f = floor),
          goal = ifelse(event_type == "GOAL", 1, 0)) %>% 
@@ -923,7 +921,7 @@ ev %>%
   scale_color_manual(values = my_colors) +
   theme_bw()
 
-pp %>%
+pp24 %>%
   filter(event_type %in% c('SHOT', 'GOAL')) %>% 
   mutate(distance_round = plyr::round_any(shot_distance, 10, f = floor),
          goal = ifelse(event_type == "GOAL", 1, 0)) %>% 
@@ -1019,7 +1017,7 @@ Over time, goalies have been saving fewer shots from 20-40 feet. It is unlikely 
 #angle coefficient plots
 
 #angle coef EV ####
-coefs_ev %>%
+coefs_ev24 %>%
   ggplot(aes(x=season, y=Shot_Angle)) + 
   geom_pointrange(aes(ymin=Shot_Angle-Shot_Angle_SD*1.96, 
                       ymax=Shot_Angle+Shot_Angle_SD*1.96)) + 
@@ -1031,7 +1029,7 @@ coefs_ev %>%
 
 
 #angle coef PP ####
-coefs_pp %>%
+coefs_pp24 %>%
   ggplot(aes(x=season, y=Shot_Angle)) + 
   geom_pointrange(aes(ymin=Shot_Angle-Shot_Angle_SD*1.96, 
                       ymax=Shot_Angle+Shot_Angle_SD*1.96)) + 
@@ -1050,7 +1048,7 @@ coefs_pp %>%
 #angle distribution EV ####
 my_colors = carto_pal(10, "Bold")
 
-ev_angle <- ev %>% 
+ev_angle24 <- ev24 %>% 
   filter(event_type %in% c('GOAL', 'SHOT', 'MISSEDD_SHOT'), 
          !is.na(shot_angle), 
          shot_angle < 100) %>% 
@@ -1063,11 +1061,11 @@ ev_angle <- ev %>%
          `50` = `50` / sum, `60` = `60` / sum, `70` = `70` / sum, `80` = `80` / sum, `90` = `90` / sum) %>%
   pivot_longer(cols = `0`:`90`, names_to = "Shot Angle")
 
-ev_angle %>% 
+ev_angle24 %>% 
   ggplot(aes(x = as.numeric(season), y = value, color = `Shot Angle`)) + 
   geom_point() + 
   geom_line() + 
-  scale_x_continuous("Season", labels = as.numeric(ev_angle$season), breaks = as.numeric(ev_angle$season)) +
+  scale_x_continuous("Season", labels = as.numeric(ev_angle24$season), breaks = as.numeric(ev_angle24$season)) +
   labs(y = "Proportion of Total Shots", title = "Shot Angles Distribution by Year with Even Strength") +
   scale_color_manual(values = my_colors) +
   theme_bw()
@@ -1075,7 +1073,7 @@ ev_angle %>%
 
 
 #angle distribution PP ####
-pp_angle <- pp %>% 
+pp_angle24 <- pp24 %>% 
   filter(event_type %in% c('GOAL', 'SHOT', 'MISSED_SHOT'), 
          !is.na(shot_angle), 
          shot_angle < 100) %>% 
@@ -1088,11 +1086,11 @@ pp_angle <- pp %>%
          `50` = `50` / sum, `60` = `60` / sum, `70` = `70` / sum, `80` = `80` / sum, `90` = `90` / sum) %>%
   pivot_longer(cols = `0`:`90`, names_to = "Shot Angle")
 
-pp_angle %>% 
+pp_angle24 %>% 
   ggplot(aes(x = as.numeric(season), y = value, color = `Shot Angle`)) + 
   geom_point() + 
   geom_line() + 
-  scale_x_continuous("Season", labels = as.numeric(ev_angle$season), breaks = as.numeric(ev_angle$season)) +
+  scale_x_continuous("Season", labels = as.numeric(ev_angle24$season), breaks = as.numeric(ev_angle24$season)) +
   labs(y = "Proportion of Total Shots", title = "Shot Angles Distribution by Year on Power Play") +
   scale_color_manual(values = my_colors) +
   theme_bw()
@@ -1105,7 +1103,7 @@ pp_angle %>%
 ```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
 my_colors = carto_pal(9, "Bold")
 
-ev %>%
+ev24 %>%
   filter(event_type %in% c('SHOT', 'GOAL')) %>% 
   mutate(angle_round = plyr::round_any(shot_angle, 10, f = floor),
          goal = ifelse(event_type == "GOAL", 1, 0)) %>% 
@@ -1124,7 +1122,7 @@ ev %>%
   scale_color_manual(values = my_colors) +
   theme_bw()
 
-pp %>%
+pp24 %>%
   filter(event_type %in% c('SHOT', 'GOAL')) %>% 
   mutate(angle_round = plyr::round_any(shot_angle, 10, f = floor),
          goal = ifelse(event_type == "GOAL", 1, 0)) %>% 
@@ -1159,7 +1157,7 @@ Similar to the distance coefficients, the shot angle coefficients for both even 
 
 
 #rebound coef EV ####
-coefs_ev %>%
+coefs_ev24 %>%
   ggplot(aes(x=season, y=Rebound)) + 
   geom_pointrange(aes(ymin=Rebound-Rebound_SD*1.96, 
                       ymax=Rebound+Rebound_SD*1.96)) + 
@@ -1170,7 +1168,7 @@ coefs_ev %>%
        y = 'Rebound Coefficient')
 
 #rebound coefs PP ####
-coefs_pp %>%
+coefs_pp24 %>%
   ggplot(aes(x=season, y=Rebound)) + 
   geom_pointrange(aes(ymin=Rebound-Rebound_SD*1.96, 
                       ymax=Rebound+Rebound_SD*1.96)) + 
@@ -1188,7 +1186,7 @@ coefs_pp %>%
 
 my_colors = carto_pal(3, "Bold")
 
-pp_rebound <- pp %>% 
+pp_rebound24 <- pp24 %>% 
   group_by(season, rebound, event_type) %>% 
   summarize(n = n()) %>% 
   group_by(season) %>% 
@@ -1209,7 +1207,7 @@ pp_rebound <- pp %>%
   theme_bw()
 
 #rebound distribution EV ####
-ev_rebound <- ev %>% 
+ev_rebound24 <- ev24 %>% 
   group_by(season, rebound, event_type) %>% 
   summarize(n = n()) %>% 
   group_by(season) %>% 
@@ -1225,18 +1223,18 @@ ev_rebound <- ev %>%
        x = 'NHL Season', 
        y = 'Percentage of All Shots in Season',
        fill = 'Shot Result')+ 
-  ylim(ggplot_build(pp_rebound)$layout$panel_scales_y[[1]]$range$range) +
+  ylim(ggplot_build(pp_rebound24)$layout$panel_scales_y[[1]]$range$range) +
   scale_fill_manual(values = my_colors) +
   theme_bw()
 
-ev_rebound
-pp_rebound
+ev_rebound24
+pp_rebound24
 ```
 
 ##### Save Percentage
 
 ```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
-ev %>% 
+ev24 %>% 
   filter(rebound == 1,
          event_type %in% c("SHOT", "GOAL")) %>% 
   group_by(season) %>% 
@@ -1249,11 +1247,11 @@ ev %>%
   geom_point(size = 3) +
   geom_line() +
   ggtitle("Even Strength Rebound Save Percentage by Year") +
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   ylab("Save Percentage") +
   theme_bw()
 
-pp %>% 
+pp24 %>% 
   filter(rebound == 1,
          event_type %in% c("SHOT", "GOAL")) %>% 
   group_by(season) %>% 
@@ -1265,7 +1263,7 @@ pp %>%
   geom_point(size = 3) +
   geom_line() +
   ggtitle("Power Play Rebound Save Percentage by Year") +
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   ylab("Save Percentage") +
   theme_bw()
 
@@ -1290,7 +1288,7 @@ The large drop-off in 2023 coincides with a spike in the frequency of rebound ev
 #rush coefficient plots
 
 #rush coefs EV ####
-coefs_ev %>%
+coefs_ev24 %>%
   ggplot(aes(x=season, y=Rush)) + 
   geom_pointrange(aes(ymin=Rush-Rush_SD*1.96, 
                       ymax=Rush+Rush_SD*1.96)) + 
@@ -1301,7 +1299,7 @@ coefs_ev %>%
        y = 'Rush Coefficient')
 
 #rush coefs PP ####
-coefs_pp %>%
+coefs_pp24 %>%
   ggplot(aes(x=season, y=Rush)) + 
   geom_pointrange(aes(ymin=Rush-Rush_SD*1.96, 
                       ymax=Rush+Rush_SD*1.96)) + 
@@ -1316,7 +1314,7 @@ coefs_pp %>%
 
 ```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
 #rush distribution EV ####
-ev_rush <- ev %>% 
+ev_rush24 <- ev24 %>% 
   group_by(season, rush, event_type) %>% 
   summarize(n = n()) %>% 
   group_by(season) %>% 
@@ -1334,10 +1332,10 @@ ev_rush <- ev %>%
   scale_fill_manual(values = my_colors) +
   theme_bw()
 
-ev_rush
+ev_rush24
 
 #rush distribution PP ####
-pp %>% 
+pp24 %>% 
   group_by(season, rush, event_type) %>% 
   summarize(n = n()) %>% 
   group_by(season) %>% 
@@ -1352,7 +1350,7 @@ pp %>%
        x = 'NHL Season', 
        y = 'Percentage of All Shots in Season',
        fill = 'Shot Result') + 
-  ylim(ggplot_build(ev_rush)$layout$panel_scales_y[[1]]$range$range) +
+  ylim(ggplot_build(ev_rush24)$layout$panel_scales_y[[1]]$range$range) +
   scale_fill_manual(values = my_colors) +
   theme_bw()
 ```
@@ -1360,7 +1358,7 @@ pp %>%
 ##### Save Percentage
 
 ```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
-ev %>% 
+ev24 %>% 
   filter(rush == 1,
          event_type %in% c("SHOT", "GOAL")) %>% 
   group_by(season) %>% 
@@ -1372,11 +1370,11 @@ ev %>%
   geom_point(size = 3) +
   geom_line() +
   ggtitle("Even Strength Rush Save Percentage by Year") +
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   ylab("Save Percentage") +
   theme_bw()
 
-pp %>% 
+pp24 %>% 
   filter(rush == 1,
          event_type %in% c("SHOT", "GOAL")) %>% 
   group_by(season) %>% 
@@ -1388,7 +1386,7 @@ pp %>%
   geom_point(size = 3) +
   geom_line() +
   ggtitle("Power Play Rush Save Percentage by Year") +
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   ylab("Save Percentage") +
   theme_bw()
 
@@ -1408,7 +1406,7 @@ The rush coefficients are positive across all season, which means shots defined 
 #cross ice coefficient plots
 
 #cross ice coefs EV ####
-coefs_ev %>%
+coefs_ev24 %>%
   ggplot(aes(x=season, y=Cross_Ice)) + 
   geom_pointrange(aes(ymin=Cross_Ice-Cross_Ice_SD*1.96, 
                       ymax=Cross_Ice+Cross_Ice_SD*1.96)) + 
@@ -1419,7 +1417,7 @@ coefs_ev %>%
        y = 'Cross Ice Coefficient')
 
 #cross ice coefs PP ####
-coefs_pp %>%
+coefs_pp24 %>%
   ggplot(aes(x=season, y=Cross_Ice)) + 
   geom_pointrange(aes(ymin=Cross_Ice-Cross_Ice_SD*1.96, 
                       ymax=Cross_Ice+Cross_Ice_SD*1.96)) + 
@@ -1434,7 +1432,7 @@ coefs_pp %>%
 
 ```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
 #cross ice distribution EV ####
-ev_cross <- ev %>% 
+ev_cross24 <- ev24 %>% 
   filter(!is.na(cross_ice_event)) %>% 
   group_by(season, cross_ice_event, event_type) %>% 
   summarize(n = n()) %>% 
@@ -1454,7 +1452,7 @@ ev_cross <- ev %>%
   theme_bw()
 
 #cross ice distribution PP ####
-pp_cross <- pp %>% 
+pp_cross24 <- pp24 %>% 
   filter(!is.na(cross_ice_event)) %>% 
   group_by(season, cross_ice_event, event_type) %>% 
   summarize(n = n()) %>% 
@@ -1471,18 +1469,18 @@ pp_cross <- pp %>%
        x = 'NHL Season', 
        y = 'Percentage of All Shots in Season',
        fill = 'Shot Result') +
-  ylim(ggplot_build(ev_cross)$layout$panel_scales_y[[1]]$range$range) +
+  ylim(ggplot_build(ev_cross24)$layout$panel_scales_y[[1]]$range$range) +
   scale_fill_manual(values = my_colors) +
   theme_bw()
 
-ev_cross
-pp_cross
+ev_cross24
+pp_cross24
 ```
 
 ##### Save Percentage
 
 ```{r, echo=FALSE, fig.show="hold", out.width="50%", message=FALSE, warning=FALSE}
-ev %>% 
+ev24 %>% 
   filter(cross_ice_event == 1,
          event_type %in% c("SHOT", "GOAL")) %>% 
   group_by(season) %>% 
@@ -1494,11 +1492,11 @@ ev %>%
   geom_point(size = 3) +
   geom_line() +
   ggtitle("Even Strength Cross Ice Event Save Percentage by Year") +
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   ylab("Save Percentage") +
   theme_bw()
 
-pp %>% 
+pp24 %>% 
   filter(cross_ice_event == 1,
          event_type %in% c("SHOT", "GOAL")) %>% 
   group_by(season) %>% 
@@ -1510,7 +1508,7 @@ pp %>%
   geom_point(size = 3) +
   geom_line() +
   ggtitle("Power Play Cross Ice Event Save Percentage by Year") +
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   ylab("Save Percentage") +
   theme_bw()
 ```
@@ -1529,7 +1527,7 @@ Cross Ice coefficients are positive for all seasons and show no patterns. Once a
 #forecheck coefficient plots
 
 #forecheck coefs EV ####
-coefs_ev %>%
+coefs_ev24 %>%
   ggplot(aes(x=season, y=Forecheck)) + 
   geom_pointrange(aes(ymin=Forecheck-Forecheck_SD*1.96, 
                       ymax=Forecheck+Forecheck_SD*1.96)) + 
@@ -1544,7 +1542,7 @@ coefs_ev %>%
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 #forecheck freq EV ####
-ev %>% 
+ev24 %>% 
   filter(!is.na(forecheck)) %>% 
   group_by(season, forecheck, event_type) %>% 
   summarize(n = n()) %>% 
@@ -1567,7 +1565,7 @@ ev %>%
 ##### Save Percentage
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
-ev %>% 
+ev24 %>% 
   filter(forecheck == 1,
          event_type %in% c("SHOT", "GOAL")) %>% 
   group_by(season) %>% 
@@ -1579,7 +1577,7 @@ ev %>%
   geom_point(size = 3) +
   geom_line() +
   ggtitle("Even Strength Forecheck Save Percentage by Year") +
-  scale_x_continuous("Season", labels = svpct_by_year$season, breaks = svpct_by_year$season) +
+  scale_x_continuous("Season", labels = svpct_by_year24$season, breaks = svpct_by_year24$season) +
   ylab("Save Percentage") + 
   theme_bw()
 
@@ -1596,7 +1594,7 @@ Forecheck coefficients (even strength only) are positive for all seasons but sho
 ##### Coefficients
 
 ```{r, echo =FALSE, message=FALSE, warning=FALSE, fig.show="hold", out.width="50%"}
-coefs_ev %>%
+coefs_ev24 %>%
   ggplot(aes(x=season, y=Rebound_Angle_Change)) +
   geom_pointrange(aes(ymin=Rebound_Angle_Change-Rebound_Angle_Change_SD*1.96,
                       ymax=Rebound_Angle_Change+Rebound_Angle_Change_SD*1.96)) +
@@ -1606,7 +1604,7 @@ coefs_ev %>%
        x = 'NHL Season',
        y = 'Rebound Angle Change Coefficient')
 
-coefs_pp %>%
+coefs_pp24 %>%
   ggplot(aes(x=season, y=Rebound_Angle_Change)) +
   geom_pointrange(aes(ymin=Rebound_Angle_Change-Rebound_Angle_Change_SD*1.96,
                       ymax=Rebound_Angle_Change+Rebound_Angle_Change_SD*1.96)) +
@@ -1623,7 +1621,7 @@ coefs_pp %>%
 #rebound angle change distribution EV ####
 my_colors = carto_pal(9, "Bold")
 
-ev_reb_angle <- ev %>% 
+ev_reb_angle24 <- ev24 %>% 
   filter(event_type %in% c('GOAL', 'SHOT', 'BLOCKED_SHOT'), 
          !is.na(angle_change), 
          angle_change < 180) %>% 
@@ -1637,13 +1635,13 @@ ev_reb_angle <- ev %>%
          `100` = `100` / sum, `120` = `120` / sum, `140` = `140` / sum, `160` = `160` / sum) %>%
   pivot_longer(cols = `0`:`160`, names_to = "Angle Change")
 
-ev_reb_angle$`Angle Change` <- factor(ev_reb_angle$`Angle Change`, levels=seq(0, 160, 20))
+ev_reb_angle24$`Angle Change` <- factor(ev_reb_angle24$`Angle Change`, levels=seq(0, 160, 20))
 
-ev_reb_angle %>% 
+ev_reb_angle24 %>% 
   ggplot(aes(x = as.numeric(season), y = value, color = `Angle Change`)) + 
   geom_point() + 
   geom_line() + 
-  scale_x_continuous("Season", labels = as.numeric(ev_reb_angle$season), breaks = as.numeric(ev_reb_angle$season)) +
+  scale_x_continuous("Season", labels = as.numeric(ev_reb_angle24$season), breaks = as.numeric(ev_reb_angle24$season)) +
   labs(y = "Proportion of Rebounds", title = "Frequency of Angle Change from Previous Shot, by Year, with Even Strength") +
   scale_color_manual(values = my_colors) +
   theme_bw()
@@ -1651,7 +1649,7 @@ ev_reb_angle %>%
 
 
 #angle distribution PP ####
-pp_reb_angle <- pp %>% 
+pp_reb_angle24 <- pp24 %>% 
   filter(event_type %in% c('GOAL', 'SHOT', 'BLOCKED_SHOT'), 
          !is.na(angle_change), 
          angle_change < 180) %>% 
@@ -1665,13 +1663,13 @@ pp_reb_angle <- pp %>%
          `100` = `100` / sum, `120` = `120` / sum, `140` = `140` / sum, `160` = `160` / sum) %>%
   pivot_longer(cols = `0`:`160`, names_to = "Angle Change")
 
-pp_reb_angle$`Angle Change` <- factor(pp_reb_angle$`Angle Change`, levels=seq(0, 160, 20))
+pp_reb_angle24$`Angle Change` <- factor(pp_reb_angle24$`Angle Change`, levels=seq(0, 160, 20))
 
-pp_reb_angle %>% 
+pp_reb_angle24 %>% 
   ggplot(aes(x = as.numeric(season), y = value, color = `Angle Change`)) + 
   geom_point() + 
   geom_line() + 
-  scale_x_continuous("Season", labels = as.numeric(pp_reb_angle$season), breaks = as.numeric(pp_reb_angle$season)) +
+  scale_x_continuous("Season", labels = as.numeric(pp_reb_angle24$season), breaks = as.numeric(pp_reb_angle24$season)) +
   labs(y = "Proportion of Rebounds", title = "Frequency of Angle Change from Previous Shot, by Year, on Power Play") +
   scale_color_manual(values = my_colors) +
   theme_bw()
